@@ -10,6 +10,7 @@ import LandingPage from '../pages/LandingPage';
 import LoginPage from '../pages/LoginPage';
 import RegisterPage from '../pages/RegisterPage';
 import DashboardPage from '../pages/DashboardPage';
+import SchemesPage from '../pages/SchemesPage';
 
 // Protected Route Wrapper
 const ProtectedRoute = () => {
@@ -59,7 +60,10 @@ export const router = createBrowserRouter([
             path: '/dashboard',
             element: <DashboardPage />,
           },
-          // Future routes: /schemes, /eligibility, /documents, etc.
+          {
+            path: '/schemes',
+            element: <SchemesPage />,
+          },
         ]
       }
     ]

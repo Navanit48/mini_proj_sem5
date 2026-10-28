@@ -26,6 +26,7 @@ async def list_schemes(
     page: int = Query(1, ge=1),
     per_page: int = Query(12, ge=1, le=50),
     category: Optional[str] = None,
+    search: Optional[str] = Query(None, max_length=100),
     state: Optional[str] = None,
     ministry: Optional[str] = None,
     user=Depends(get_current_user),
@@ -37,6 +38,8 @@ async def list_schemes(
 
     if category:
         query = query.eq("category", category)
+    if search and search.strip():
+        query = query.ilike("name", f"%{search.strip()}%")
     if ministry:
         query = query.eq("ministry", ministry)
     if state:
