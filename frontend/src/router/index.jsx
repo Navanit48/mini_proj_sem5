@@ -11,6 +11,10 @@ import LoginPage from '../pages/LoginPage';
 import RegisterPage from '../pages/RegisterPage';
 import DashboardPage from '../pages/DashboardPage';
 import SchemesPage from '../pages/SchemesPage';
+import EligibilityPage from '../pages/EligibilityPage';
+import DocumentsPage from '../pages/DocumentsPage';
+import ChecklistsPage from '../pages/ChecklistsPage';
+import AnalyticsPage from '../pages/AnalyticsPage';
 
 // Protected Route Wrapper
 const ProtectedRoute = () => {
@@ -63,6 +67,22 @@ export const router = createBrowserRouter([
           {
             path: '/schemes',
             element: <SchemesPage />,
+          },
+          {
+            path: '/eligibility',
+            element: <EligibilityPage />,
+          },
+          {
+            path: '/documents',
+            element: <DocumentsPage />,
+          },
+          {
+            path: '/checklists',
+            element: <ChecklistsPage />,
+          },
+          {
+            path: '/analytics',
+            element: <AnalyticsPage />,
           },
         ]
       }
