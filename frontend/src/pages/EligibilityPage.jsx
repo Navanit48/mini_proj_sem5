@@ -8,6 +8,13 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/utils';
+import { useAuth } from '../context/AuthContext';
+
+const getEligibilityStatus = (percentage) => {
+  if (percentage >= 70) return 'Eligible';
+  if (percentage >= 40) return 'Partially Eligible';
+  return 'Not Eligible';
+};
 
 const STATES = [
   'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
@@ -38,6 +45,7 @@ const selectClasses = "w-full px-3.5 py-2.5 bg-secondary/50 border border-border
 const ResultCard = ({ result, index }) => {
   const [expanded, setExpanded] = useState(false);
   const pct = result.match_percentage;
+  const status = getEligibilityStatus(pct);
   const isGoodMatch = pct >= 70;
   const isPartialMatch = pct >= 40 && pct < 70;
 
@@ -65,7 +73,8 @@ const ResultCard = ({ result, index }) => {
             {isGoodMatch ? <CheckCircle2 className="w-3.5 h-3.5" /> :
              isPartialMatch ? <AlertCircle className="w-3.5 h-3.5" /> :
              <XCircle className="w-3.5 h-3.5" />}
-            {pct}%
+            <span>{status}</span>
+            <span className="opacity-70">{pct}%</span>
           </div>
         </div>
 
@@ -126,10 +135,14 @@ const ResultCard = ({ result, index }) => {
 };
 
 const EligibilityPage = () => {
+  const { user } = useAuth();
   const [step, setStep] = useState('form'); // form | loading | results
   const [results, setResults] = useState(null);
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
 
   const [profile, setProfile] = useState({
     full_name: '',
@@ -145,12 +158,46 @@ const EligibilityPage = () => {
     is_disabled: false,
   });
 
+  useEffect(() => {
+    const savedProfile = user?.profile;
+    if (savedProfile) {
+      setProfile(current => ({
+        ...current,
+        full_name: savedProfile.full_name || current.full_name,
+        state: savedProfile.state || current.state,
+        district: savedProfile.district || current.district,
+        occupation: savedProfile.occupation || current.occupation,
+        category: savedProfile.category || current.category,
+        annual_income: savedProfile.annual_income ?? current.annual_income,
+        land_holding_acres: savedProfile.land_holding_acres ?? current.land_holding_acres,
+        is_bpl: savedProfile.is_bpl ?? current.is_bpl,
+        is_disabled: savedProfile.is_disabled ?? current.is_disabled,
+      }));
+    }
+  }, [user]);
+
+  useEffect(() => {
+    let active = true;
+    api.get('/eligibility/history')
+      .then(({ data }) => {
+        if (active) setHistory(data.checks || []);
+      })
+      .catch(() => {
+        if (active) setHistoryError('Could not load eligibility history.');
+      })
+      .finally(() => {
+        if (active) setHistoryLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
   const updateField = (field, value) => {
     setProfile(prev => ({ ...prev, [field]: value }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setErrorMessage('');
     setStep('loading');
 
     try {
@@ -162,34 +209,22 @@ const EligibilityPage = () => {
 
       const response = await api.post('/eligibility/check', payload);
       setResults(response.data);
+      setHistory(current => [response.data, ...current].slice(0, 20));
       setStep('results');
     } catch (error) {
-      console.error('Eligibility check failed, using demo results', error);
-      // Demo fallback
-      setResults({
-        check_id: 'demo-check',
-        matched_count: 5,
-        results: [
-          { scheme_id: '1', scheme_name: 'Pradhan Mantri Awas Yojana', match_percentage: 100, matched_rules: ['annual_income lte 600000', 'category in [general, obc, sc, st, ews]'], failed_rules: [] },
-          { scheme_id: '3', scheme_name: 'Ayushman Bharat - PMJAY', match_percentage: 100, matched_rules: ['is_bpl eq true'], failed_rules: [] },
-          { scheme_id: '10', scheme_name: 'Atal Pension Yojana', match_percentage: 100, matched_rules: ['annual_income lte 500000'], failed_rules: [] },
-          { scheme_id: '5', scheme_name: 'MGNREGA', match_percentage: 75, matched_rules: ['occupation in [farmer, labourer]'], failed_rules: ['state eq rural (Missing)'] },
-          { scheme_id: '7', scheme_name: 'National Food Security Act', match_percentage: 50, matched_rules: ['is_bpl eq true'], failed_rules: ['annual_income lte 100000'] },
-          { scheme_id: '2', scheme_name: 'PM Kisan Samman Nidhi', match_percentage: 30, matched_rules: [], failed_rules: ['occupation eq farmer', 'land_holding_acres gt 0'] },
-          { scheme_id: '6', scheme_name: 'Stand-Up India', match_percentage: 0, matched_rules: [], failed_rules: ['category in [sc, st]', 'gender eq female'] },
-        ],
-        checked_at: new Date().toISOString(),
-      });
-      setStep('results');
+      setErrorMessage(error.response?.data?.detail || 'Could not check eligibility. Please try again.');
+      setStep('form');
     }
   };
 
   const resetForm = () => {
     setStep('form');
     setResults(null);
+    setErrorMessage('');
   };
 
-  const matchedCount = results?.results?.filter(r => r.match_percentage >= 50).length || 0;
+  const matchedCount = results?.results?.filter(r => r.match_percentage >= 70).length || 0;
+  const partialCount = results?.results?.filter(r => r.match_percentage >= 40 && r.match_percentage < 70).length || 0;
   const totalCount = results?.results?.length || 0;
 
   return (
@@ -207,20 +242,72 @@ const EligibilityPage = () => {
           </h1>
           <p className="text-sm text-muted-foreground mt-1.5">
             {step === 'results'
-              ? `Found ${matchedCount} matching scheme${matchedCount !== 1 ? 's' : ''} out of ${totalCount}`
+              ? `${matchedCount} eligible · ${partialCount} partially eligible out of ${totalCount} schemes`
               : 'Fill in your profile to find schemes you qualify for'}
           </p>
         </div>
-        {step === 'results' && (
+        <div className="flex flex-wrap justify-end gap-2">
           <button
-            onClick={resetForm}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-primary bg-primary/8 hover:bg-primary/14 transition-all"
+            type="button"
+            onClick={() => setShowHistory(value => !value)}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground bg-secondary/50 hover:bg-secondary transition-all"
           >
-            <RefreshCw className="w-4 h-4" />
-            Check Again
+            <History className="w-4 h-4" />
+            History
           </button>
-        )}
+          {step === 'results' && (
+            <button
+              type="button"
+              onClick={resetForm}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-primary bg-primary/8 hover:bg-primary/14 transition-all"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Check Again
+            </button>
+          )}
+        </div>
       </div>
+
+      {showHistory && (
+        <div className="bg-card border border-border/50 rounded-2xl p-5 space-y-3">
+          <h2 className="font-semibold text-foreground">Recent eligibility checks</h2>
+          {historyLoading ? (
+            <p className="text-sm text-muted-foreground">Loading history…</p>
+          ) : historyError ? (
+            <p className="text-sm text-rose-400">{historyError}</p>
+          ) : history.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Your saved checks will appear here.</p>
+          ) : (
+            <div className="divide-y divide-border/40">
+              {history.map(check => (
+                <button
+                  type="button"
+                  key={check.check_id}
+                  onClick={() => {
+                    setResults(check);
+                    setStep('results');
+                    setShowHistory(false);
+                  }}
+                  className="w-full flex items-center justify-between gap-4 py-3 text-left hover:text-primary transition-colors"
+                >
+                  <span className="text-sm text-foreground">
+                    {check.matched_count || 0} eligible scheme{check.matched_count === 1 ? '' : 's'}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {check.checked_at ? new Date(check.checked_at).toLocaleString() : ''}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {errorMessage && (
+        <div role="alert" className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-400">
+          {errorMessage}
+        </div>
+      )}
 
       {/* Loading Animation */}
       <AnimatePresence mode="wait">
@@ -420,11 +507,9 @@ const EligibilityPage = () => {
                   <ShieldCheck className="w-7 h-7 text-emerald-400" />
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-foreground">
-                    {matchedCount} Scheme{matchedCount !== 1 ? 's' : ''} Matched
-                  </h3>
+                  <h3 className="text-xl font-bold text-foreground">{matchedCount} Eligible</h3>
                   <p className="text-sm text-muted-foreground mt-0.5">
-                    Out of {totalCount} schemes evaluated based on your profile
+                    {partialCount} partially eligible · {totalCount} schemes evaluated using your profile
                   </p>
                 </div>
               </div>

@@ -5,6 +5,9 @@ Evaluates user profiles against scheme rules.
 
 from typing import List, Dict, Any
 
+ELIGIBLE_MATCH_THRESHOLD = 70.0
+
+
 def evaluate_eligibility(user_profile: Dict[str, Any], scheme_rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Evaluate a user profile against a list of scheme rules.
@@ -17,14 +20,14 @@ def evaluate_eligibility(user_profile: Dict[str, Any], scheme_rules: List[Dict[s
         scheme_name = rule_record.get("schemes", {}).get("name", "Unknown")
         rule_def = rule_record.get("rule_definition", {})
         
-        # If no rules defined, assume 100% match (or could assume 0, depends on policy)
+        # A scheme without configured rules cannot be presented as eligible.
         if not rule_def or "conditions" not in rule_def:
             results.append({
                 "scheme_id": scheme_id,
                 "scheme_name": scheme_name,
-                "match_percentage": 100.0,
-                "matched_rules": ["No specific rules defined"],
-                "failed_rules": []
+                "match_percentage": 0.0,
+                "matched_rules": [],
+                "failed_rules": ["Eligibility rules are not configured"]
             })
             continue
             
@@ -83,7 +86,7 @@ def _eval_node(node: Dict[str, Any], profile: Dict[str, Any], matched: List[str]
                     elif op == "lt": is_match = actual_num < target_num
                     elif op == "lte": is_match = actual_num <= target_num
                 elif op == "in" and isinstance(target, list):
-                    is_match = actual in target
+                    is_match = any(str(actual).lower() == str(value).lower() for value in target)
                 elif op == "contains" and isinstance(actual, list):
                     is_match = target in actual
             except (ValueError, TypeError):
