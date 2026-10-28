@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     # ─── File Upload ───
     MAX_UPLOAD_SIZE_MB: int = 10
-    ALLOWED_FILE_TYPES: str = "image/jpeg,image/png,application/pdf"
+    ALLOWED_FILE_TYPES: str = "image/jpeg,application/pdf"
 
     class Config:
         env_file = ".env"

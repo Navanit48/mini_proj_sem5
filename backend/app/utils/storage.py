@@ -4,15 +4,13 @@ Handles file operations with Supabase Storage.
 """
 
 from app.utils.supabase_client import get_supabase_client
-from app.config import get_settings
 import uuid
-import os
 
 
 BUCKET_NAME = "documents"
 
 
-def upload_file(user_id: str, file_bytes: bytes, file_name: str, content_type: str) -> str:
+def upload_file(user_id: str, file_bytes: bytes, content_type: str) -> str:
     """
     Upload a file to Supabase Storage.
     
@@ -21,15 +19,15 @@ def upload_file(user_id: str, file_bytes: bytes, file_name: str, content_type: s
     """
     supabase = get_supabase_client()
     
-    # Generate unique path: documents/{user_id}/{uuid}.{ext}
-    ext = os.path.splitext(file_name)[1]
+    # Store each user's documents in their own folder with a server-generated name.
+    ext = ".pdf" if content_type == "application/pdf" else ".jpg"
     unique_name = f"{uuid.uuid4()}{ext}"
     storage_path = f"{user_id}/{unique_name}"
 
     supabase.storage.from_(BUCKET_NAME).upload(
         path=storage_path,
         file=file_bytes,
-        file_options={"content-type": content_type},
+        file_options={"content-type": content_type, "upsert": "false"},
     )
 
     return storage_path
@@ -51,7 +49,7 @@ def get_signed_url(storage_path: str, expires_in: int = 3600) -> str:
         path=storage_path,
         expires_in=expires_in,
     )
-    return response.get("signedURL", "")
+    return response.get("signedURL") or response.get("signedUrl", "")
 
 
 def delete_file(storage_path: str) -> bool:

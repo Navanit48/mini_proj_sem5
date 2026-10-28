@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Upload, FileText, Image, File, Loader2, CheckCircle2,
-  XCircle, Clock, Trash2, Eye, RotateCcw, AlertCircle,
-  FileImage, FileType, Plus, X, Download, Sparkles
+  Upload, FileText, File, Loader2, Trash2, AlertCircle,
+  FileImage, FileType, Plus, X, Eye
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/utils';
 
-const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'application/pdf'];
+const ACCEPTED_TYPES = ['image/jpeg', 'application/pdf'];
 const MAX_SIZE_MB = 10;
 
 const DOCUMENT_CATEGORIES = [
@@ -24,22 +23,6 @@ const DOCUMENT_CATEGORIES = [
   { value: 'general', label: 'Other' },
 ];
 
-const statusConfig = {
-  uploaded: { icon: Clock, color: 'text-amber-400', bg: 'bg-amber-500/10', label: 'Uploaded' },
-  processing: { icon: Loader2, color: 'text-blue-400', bg: 'bg-blue-500/10', label: 'Processing', spin: true },
-  completed: { icon: CheckCircle2, color: 'text-emerald-400', bg: 'bg-emerald-500/10', label: 'OCR Complete' },
-  failed: { icon: XCircle, color: 'text-rose-400', bg: 'bg-rose-500/10', label: 'Failed' },
-};
-
-// Demo data
-const DEMO_DOCUMENTS = [
-  { id: 'd1', file_name: 'aadhaar_front.jpg', file_type: 'image/jpeg', document_category: 'aadhaar', status: 'completed', file_size_bytes: 245000, uploaded_at: '2026-10-15T10:30:00Z' },
-  { id: 'd2', file_name: 'pan_card.png', file_type: 'image/png', document_category: 'pan', status: 'completed', file_size_bytes: 312000, uploaded_at: '2026-10-14T14:20:00Z' },
-  { id: 'd3', file_name: 'income_certificate_2026.pdf', file_type: 'application/pdf', document_category: 'income_certificate', status: 'uploaded', file_size_bytes: 156000, uploaded_at: '2026-10-20T09:15:00Z' },
-  { id: 'd4', file_name: 'caste_cert.jpg', file_type: 'image/jpeg', document_category: 'caste_certificate', status: 'processing', file_size_bytes: 198000, uploaded_at: '2026-10-22T16:45:00Z' },
-  { id: 'd5', file_name: 'bank_passbook_page1.jpg', file_type: 'image/jpeg', document_category: 'bank_passbook', status: 'completed', file_size_bytes: 278000, uploaded_at: '2026-10-10T11:00:00Z' },
-];
-
 const formatFileSize = (bytes) => {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -52,9 +35,7 @@ const getFileIcon = (type) => {
   return File;
 };
 
-const DocumentCard = ({ doc, onDelete, onRetryOcr }) => {
-  const status = statusConfig[doc.status] || statusConfig.uploaded;
-  const StatusIcon = status.icon;
+const DocumentCard = ({ doc, onDelete }) => {
   const FileIcon = getFileIcon(doc.file_type);
   const categoryLabel = DOCUMENT_CATEGORIES.find(c => c.value === doc.document_category)?.label || doc.document_category;
 
@@ -79,9 +60,8 @@ const DocumentCard = ({ doc, onDelete, onRetryOcr }) => {
 
           {/* Meta Row */}
           <div className="flex items-center gap-3 mt-2.5">
-            <span className={cn('inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md', status.bg, status.color)}>
-              <StatusIcon className={cn('w-3 h-3', status.spin && 'animate-spin')} />
-              {status.label}
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400">
+              Uploaded
             </span>
             <span className="text-[11px] text-muted-foreground">{formatFileSize(doc.file_size_bytes)}</span>
             <span className="text-[11px] text-muted-foreground">
@@ -92,14 +72,10 @@ const DocumentCard = ({ doc, onDelete, onRetryOcr }) => {
 
         {/* Actions */}
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-          {doc.status === 'failed' && (
-            <button
-              onClick={() => onRetryOcr(doc.id)}
-              className="p-2 rounded-lg text-amber-400 hover:bg-amber-500/10 transition-colors"
-              title="Retry OCR"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
+          {doc.signed_url && (
+            <a href={doc.signed_url} target="_blank" rel="noreferrer" className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors" title="View document">
+              <Eye className="w-4 h-4" />
+            </a>
           )}
           <button
             onClick={() => onDelete(doc.id)}
@@ -122,6 +98,8 @@ const DocumentsPage = () => {
   const [uploadCategory, setUploadCategory] = useState('general');
   const [dragActive, setDragActive] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -133,8 +111,8 @@ const DocumentsPage = () => {
       const response = await api.get('/documents');
       setDocuments(response.data.documents || []);
     } catch (error) {
-      console.error('Failed to load documents, using demo', error);
-      setDocuments(DEMO_DOCUMENTS);
+      console.error('Failed to load documents', error);
+      setLoadError(error.response?.data?.detail || 'Documents could not be loaded. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -146,7 +124,7 @@ const DocumentsPage = () => {
 
     // Validate
     if (!ACCEPTED_TYPES.includes(file.type)) {
-      setUploadError('Only JPEG, PNG, and PDF files are allowed.');
+      setUploadError('Only JPEG and PDF files are allowed.');
       return;
     }
     if (file.size > MAX_SIZE_MB * 1024 * 1024) {
@@ -171,39 +149,20 @@ const DocumentsPage = () => {
       setUploadCategory('general');
     } catch (error) {
       console.error('Upload failed', error);
-      // Demo fallback
-      const newDoc = {
-        id: `demo-${Date.now()}`,
-        file_name: file.name,
-        file_type: file.type,
-        document_category: uploadCategory,
-        status: 'uploaded',
-        file_size_bytes: file.size,
-        uploaded_at: new Date().toISOString(),
-      };
-      setDocuments(prev => [newDoc, ...prev]);
-      setShowUpload(false);
-      setUploadCategory('general');
+      setUploadError(error.response?.data?.detail || 'Upload failed. Please try again.');
     } finally {
       setUploading(false);
     }
   };
 
   const handleDelete = async (docId) => {
+    setActionError('');
     try {
       await api.delete(`/documents/${docId}`);
+      setDocuments(prev => prev.filter(d => d.id !== docId));
     } catch (error) {
-      console.error('Delete failed (demo mode)', error);
-    }
-    setDocuments(prev => prev.filter(d => d.id !== docId));
-  };
-
-  const handleRetryOcr = async (docId) => {
-    try {
-      await api.post(`/documents/${docId}/ocr`);
-      setDocuments(prev => prev.map(d => d.id === docId ? { ...d, status: 'processing' } : d));
-    } catch (error) {
-      console.error('OCR retry failed', error);
+      console.error('Delete failed', error);
+      setActionError(error.response?.data?.detail || 'Document could not be deleted. Please try again.');
     }
   };
 
@@ -223,9 +182,8 @@ const DocumentsPage = () => {
 
   const statusCounts = {
     total: documents.length,
-    completed: documents.filter(d => d.status === 'completed').length,
-    pending: documents.filter(d => d.status === 'uploaded' || d.status === 'processing').length,
-    failed: documents.filter(d => d.status === 'failed').length,
+    pdf: documents.filter(d => d.file_type === 'application/pdf').length,
+    jpeg: documents.filter(d => d.file_type === 'image/jpeg').length,
   };
 
   return (
@@ -240,7 +198,7 @@ const DocumentsPage = () => {
         <div>
           <h1 className="text-2xl sm:text-[28px] font-bold text-foreground tracking-tight">Documents</h1>
           <p className="text-sm text-muted-foreground mt-1.5">
-            Upload and manage your identity documents. AI-powered OCR extracts fields automatically.
+            Upload and manage PDF and JPEG copies of your documents.
           </p>
         </div>
         <button
@@ -256,9 +214,9 @@ const DocumentsPage = () => {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: 'Total', value: statusCounts.total, color: 'text-foreground', bg: 'bg-secondary/50' },
-          { label: 'OCR Complete', value: statusCounts.completed, color: 'text-emerald-400', bg: 'bg-emerald-500/8' },
-          { label: 'Pending', value: statusCounts.pending, color: 'text-amber-400', bg: 'bg-amber-500/8' },
-          { label: 'Failed', value: statusCounts.failed, color: 'text-rose-400', bg: 'bg-rose-500/8' },
+          { label: 'PDF files', value: statusCounts.pdf, color: 'text-rose-400', bg: 'bg-rose-500/8' },
+          { label: 'JPEG images', value: statusCounts.jpeg, color: 'text-blue-400', bg: 'bg-blue-500/8' },
+          { label: 'Max file size', value: `${MAX_SIZE_MB} MB`, color: 'text-amber-400', bg: 'bg-amber-500/8' },
         ].map((stat) => (
           <div key={stat.label} className={cn('rounded-xl p-4 border border-border/30', stat.bg)}>
             <p className="text-xs text-muted-foreground font-medium">{stat.label}</p>
@@ -326,7 +284,7 @@ const DocumentsPage = () => {
                 {uploading ? (
                   <div className="flex flex-col items-center">
                     <Loader2 className="w-8 h-8 text-primary animate-spin mb-3" />
-                    <p className="text-sm font-medium text-foreground">Uploading & processing...</p>
+                    <p className="text-sm font-medium text-foreground">Uploading...</p>
                   </div>
                 ) : (
                   <>
@@ -334,7 +292,7 @@ const DocumentsPage = () => {
                     <p className="text-sm font-medium text-foreground mb-1">
                       {dragActive ? 'Drop file here' : 'Click to upload or drag & drop'}
                     </p>
-                    <p className="text-xs text-muted-foreground">JPEG, PNG, or PDF up to {MAX_SIZE_MB}MB</p>
+                    <p className="text-xs text-muted-foreground">JPEG or PDF up to {MAX_SIZE_MB}MB</p>
                   </>
                 )}
               </div>
@@ -351,9 +309,20 @@ const DocumentsPage = () => {
       </AnimatePresence>
 
       {/* Documents List */}
+      {actionError && (
+        <div className="flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-400">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          {actionError}
+        </div>
+      )}
       {loading ? (
         <div className="flex items-center justify-center h-48">
           <Loader2 className="w-7 h-7 animate-spin text-primary" />
+        </div>
+      ) : loadError ? (
+        <div className="flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-400">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          {loadError}
         </div>
       ) : documents.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -378,7 +347,6 @@ const DocumentsPage = () => {
                 key={doc.id}
                 doc={doc}
                 onDelete={handleDelete}
-                onRetryOcr={handleRetryOcr}
               />
             ))}
           </AnimatePresence>
