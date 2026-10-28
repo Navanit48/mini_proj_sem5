@@ -14,7 +14,6 @@ import SchemesPage from '../pages/SchemesPage';
 import EligibilityPage from '../pages/EligibilityPage';
 import DocumentsPage from '../pages/DocumentsPage';
 import ChecklistsPage from '../pages/ChecklistsPage';
-import AnalyticsPage from '../pages/AnalyticsPage';
 
 // Protected Route Wrapper
 const ProtectedRoute = () => {
@@ -82,7 +81,9 @@ export const router = createBrowserRouter([
           },
           {
             path: '/analytics',
-            element: <AnalyticsPage />,
+            lazy: async () => ({
+              Component: (await import('../pages/AnalyticsPage')).default,
+            }),
           },
         ]
       }
