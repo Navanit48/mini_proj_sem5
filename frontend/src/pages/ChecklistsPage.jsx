@@ -2,61 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   CheckSquare, Plus, Loader2, CheckCircle2, Circle,
-  ChevronDown, ChevronRight, Sparkles, Clock, AlertCircle,
-  Trash2, ExternalLink, ListChecks
+  ChevronDown, Clock, ListChecks
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/utils';
 
-// Demo data
-const DEMO_CHECKLISTS = [
-  {
-    id: 'cl1',
-    scheme_id: 's1',
-    scheme_name: 'Pradhan Mantri Awas Yojana',
-    status: 'active',
-    created_at: '2026-10-10T10:00:00Z',
-    updated_at: '2026-10-22T10:00:00Z',
-    items: [
-      { id: 'i1', title: 'Collect Income Certificate', description: 'Obtain from Tehsildar office. Must be for current financial year.', is_completed: true, due_date: '2026-10-15', sort_order: 0, completed_at: '2026-10-14T10:00:00Z' },
-      { id: 'i2', title: 'Upload Aadhaar Card copy', description: 'Both front and back. Must be linked to mobile number.', is_completed: true, due_date: '2026-10-18', sort_order: 1, completed_at: '2026-10-16T10:00:00Z' },
-      { id: 'i3', title: 'Get BPL Certificate', description: 'Issued by Block Development Officer. Valid for 1 year.', is_completed: false, due_date: '2026-10-25', sort_order: 2, completed_at: null },
-      { id: 'i4', title: 'Fill online application form', description: 'Visit pmaymis.gov.in and complete the application with all details.', is_completed: false, due_date: '2026-10-28', sort_order: 3, completed_at: null },
-      { id: 'i5', title: 'Submit physical documents at CSC', description: 'Visit nearest Common Service Centre with all original documents.', is_completed: false, due_date: '2026-11-01', sort_order: 4, completed_at: null },
-    ],
-  },
-  {
-    id: 'cl2',
-    scheme_id: 's3',
-    scheme_name: 'Ayushman Bharat - PMJAY',
-    status: 'active',
-    created_at: '2026-10-18T10:00:00Z',
-    updated_at: '2026-10-20T10:00:00Z',
-    items: [
-      { id: 'i6', title: 'Check name in beneficiary list', description: 'Visit mera.pmjay.gov.in and search with Aadhaar/mobile.', is_completed: true, due_date: null, sort_order: 0, completed_at: '2026-10-18T14:00:00Z' },
-      { id: 'i7', title: 'Visit empanelled hospital for e-KYC', description: 'Carry Aadhaar and ration card for biometric verification.', is_completed: false, due_date: '2026-10-30', sort_order: 1, completed_at: null },
-      { id: 'i8', title: 'Collect Ayushman Card', description: 'Golden card will be issued after verification. Keep safely.', is_completed: false, due_date: '2026-11-05', sort_order: 2, completed_at: null },
-    ],
-  },
-  {
-    id: 'cl3',
-    scheme_id: 's6',
-    scheme_name: 'Post-Matric Scholarship',
-    status: 'completed',
-    created_at: '2026-09-01T10:00:00Z',
-    updated_at: '2026-10-05T10:00:00Z',
-    items: [
-      { id: 'i9', title: 'Register on National Scholarship Portal', description: 'Create account at scholarships.gov.in', is_completed: true, due_date: '2026-09-10', sort_order: 0, completed_at: '2026-09-08T10:00:00Z' },
-      { id: 'i10', title: 'Upload caste certificate and marksheet', description: 'Scan and upload in PDF format under 2MB.', is_completed: true, due_date: '2026-09-15', sort_order: 1, completed_at: '2026-09-14T10:00:00Z' },
-      { id: 'i11', title: 'Get institute verification', description: 'Submit printed application to college admin.', is_completed: true, due_date: '2026-09-25', sort_order: 2, completed_at: '2026-09-22T10:00:00Z' },
-    ],
-  },
-];
-
-const ChecklistCard = ({ checklist, onToggleItem }) => {
+const ChecklistCard = ({ checklist, onToggleItem, pendingItems }) => {
   const [expanded, setExpanded] = useState(checklist.status === 'active');
-  const completedItems = checklist.items.filter(i => i.is_completed).length;
-  const totalItems = checklist.items.length;
+  const items = checklist.items || [];
+  const completedItems = items.filter(i => i.is_completed).length;
+  const totalItems = items.length;
   const progress = totalItems > 0 ? (completedItems / totalItems) * 100 : 0;
   const isComplete = checklist.status === 'completed';
 
@@ -125,7 +80,7 @@ const ChecklistCard = ({ checklist, onToggleItem }) => {
             className="overflow-hidden"
           >
             <div className="px-5 sm:px-6 pb-5 sm:pb-6 pt-4 space-y-1">
-              {checklist.items
+              {[...items]
                 .sort((a, b) => a.sort_order - b.sort_order)
                 .map((item, index) => (
                   <motion.div
@@ -140,6 +95,9 @@ const ChecklistCard = ({ checklist, onToggleItem }) => {
                     )}
                   >
                     <button
+                      type="button"
+                      disabled={pendingItems[`${checklist.id}:${item.id}`]}
+                      aria-label={`${item.is_completed ? 'Mark incomplete' : 'Mark complete'}: ${item.title}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         onToggleItem(checklist.id, item.id, !item.is_completed);
@@ -190,27 +148,56 @@ const ChecklistCard = ({ checklist, onToggleItem }) => {
 
 const ChecklistsPage = () => {
   const [checklists, setChecklists] = useState([]);
+  const [schemes, setSchemes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all'); // all, active, completed
+  const [selectedSchemeId, setSelectedSchemeId] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [pendingItems, setPendingItems] = useState({});
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
 
   useEffect(() => {
-    fetchChecklists();
+    let active = true;
+    Promise.all([api.get('/checklists'), api.get('/schemes', { params: { per_page: 50 } })])
+      .then(([checklistResponse, schemeResponse]) => {
+        if (!active) return;
+        setChecklists(checklistResponse.data.checklists || []);
+        setSchemes(schemeResponse.data.schemes || []);
+      })
+      .catch(() => {
+        if (active) setLoadError('Checklists and schemes could not be loaded. Please refresh and try again.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => { active = false; };
   }, []);
 
-  const fetchChecklists = async () => {
+  const handleCreateChecklist = async (event) => {
+    event.preventDefault();
+    if (!selectedSchemeId) return;
+    setCreating(true);
+    setActionError('');
     try {
-      const response = await api.get('/checklists');
-      setChecklists(response.data.checklists || []);
+      const response = await api.post('/checklists/generate', { scheme_id: selectedSchemeId });
+      setChecklists(current => [response.data, ...current]);
+      setSelectedSchemeId('');
     } catch (error) {
-      console.error('Failed to load checklists, using demo', error);
-      setChecklists(DEMO_CHECKLISTS);
+      setActionError(error.response?.data?.detail || 'Could not create this checklist. Please try again.');
     } finally {
-      setLoading(false);
+      setCreating(false);
     }
   };
 
   const handleToggleItem = async (checklistId, itemId, isCompleted) => {
-    // Optimistic update
+    const pendingKey = `${checklistId}:${itemId}`;
+    const previousItem = checklists
+      .find(checklist => checklist.id === checklistId)
+      ?.items.find(item => item.id === itemId);
+    setActionError('');
+    setPendingItems(current => ({ ...current, [pendingKey]: true }));
     setChecklists(prev =>
       prev.map(cl => {
         if (cl.id !== checklistId) return cl;
@@ -219,7 +206,7 @@ const ChecklistsPage = () => {
             ? { ...item, is_completed: isCompleted, completed_at: isCompleted ? new Date().toISOString() : null }
             : item
         );
-        const allDone = updatedItems.every(i => i.is_completed);
+        const allDone = updatedItems.length > 0 && updatedItems.every(i => i.is_completed);
         return { ...cl, items: updatedItems, status: allDone ? 'completed' : 'active' };
       })
     );
@@ -227,7 +214,21 @@ const ChecklistsPage = () => {
     try {
       await api.patch(`/checklists/${checklistId}/items/${itemId}`, { is_completed: isCompleted });
     } catch (error) {
-      console.error('Failed to update item (demo mode)', error);
+      setChecklists(current => current.map(cl => {
+        if (cl.id !== checklistId) return cl;
+        const restoredItems = cl.items.map(item => item.id === itemId
+          ? { ...item, is_completed: !isCompleted, completed_at: previousItem?.completed_at || null }
+          : item);
+        const allRestored = restoredItems.length > 0 && restoredItems.every(item => item.is_completed);
+        return { ...cl, items: restoredItems, status: allRestored ? 'completed' : 'active' };
+      }));
+      setActionError(error.response?.data?.detail || 'Could not save that checklist update. Please try again.');
+    } finally {
+      setPendingItems(current => {
+        const next = { ...current };
+        delete next[pendingKey];
+        return next;
+      });
     }
   };
 
@@ -237,8 +238,10 @@ const ChecklistsPage = () => {
     return true;
   });
 
-  const totalTasks = checklists.reduce((acc, cl) => acc + cl.items.length, 0);
-  const completedTasks = checklists.reduce((acc, cl) => acc + cl.items.filter(i => i.is_completed).length, 0);
+  const totalTasks = checklists.reduce((acc, cl) => acc + (cl.items || []).length, 0);
+  const completedTasks = checklists.reduce((acc, cl) => acc + (cl.items || []).filter(i => i.is_completed).length, 0);
+  const existingSchemeIds = new Set(checklists.map(checklist => checklist.scheme_id));
+  const availableSchemes = schemes.filter(scheme => !existingSchemeIds.has(scheme.id));
 
   return (
     <motion.div
@@ -251,9 +254,41 @@ const ChecklistsPage = () => {
       <div>
         <h1 className="text-2xl sm:text-[28px] font-bold text-foreground tracking-tight">Checklists</h1>
         <p className="text-sm text-muted-foreground mt-1.5">
-          AI-generated step-by-step application guides for your matched schemes.
+          Create a scheme checklist and track your application tasks.
         </p>
       </div>
+
+      <form onSubmit={handleCreateChecklist} className="bg-card border border-border/50 rounded-2xl p-5 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+          <div className="flex-1 space-y-1.5">
+            <label htmlFor="checklist-scheme" className="block text-sm font-medium text-foreground">Choose a scheme</label>
+            <select
+              id="checklist-scheme"
+              value={selectedSchemeId}
+              onChange={event => setSelectedSchemeId(event.target.value)}
+              disabled={loading || availableSchemes.length === 0}
+              required
+              className="w-full px-3.5 py-2.5 bg-secondary/50 border border-border/50 rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary/40"
+            >
+              <option value="">{availableSchemes.length ? 'Select a scheme' : 'No schemes available for a new checklist'}</option>
+              {availableSchemes.map(scheme => <option key={scheme.id} value={scheme.id}>{scheme.name}</option>)}
+            </select>
+          </div>
+          <button
+            type="submit"
+            disabled={loading || creating || !selectedSchemeId}
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            {creating ? 'Creating…' : 'Create Checklist'}
+          </button>
+        </div>
+        {schemes.length > 0 && availableSchemes.length === 0 && (
+          <p className="text-xs text-muted-foreground mt-2">A checklist already exists for every available scheme.</p>
+        )}
+      </form>
+
+      {actionError && <p role="alert" className="text-sm text-rose-400">{actionError}</p>}
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -302,6 +337,10 @@ const ChecklistsPage = () => {
         <div className="flex items-center justify-center h-48">
           <Loader2 className="w-7 h-7 animate-spin text-primary" />
         </div>
+      ) : loadError ? (
+        <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-5 text-sm text-rose-400">
+          {loadError}
+        </div>
       ) : filteredChecklists.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <div className="w-16 h-16 rounded-2xl bg-secondary/60 flex items-center justify-center mb-4">
@@ -309,7 +348,7 @@ const ChecklistsPage = () => {
           </div>
           <p className="text-muted-foreground font-medium">No checklists yet</p>
           <p className="text-sm text-muted-foreground/60 mt-1">
-            Checklists are generated when you match with eligible schemes
+            Choose a scheme above to create your first checklist.
           </p>
         </div>
       ) : (
@@ -319,6 +358,7 @@ const ChecklistsPage = () => {
               key={checklist.id}
               checklist={checklist}
               onToggleItem={handleToggleItem}
+              pendingItems={pendingItems}
             />
           ))}
         </div>

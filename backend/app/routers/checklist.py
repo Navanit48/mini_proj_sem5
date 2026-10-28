@@ -11,7 +11,7 @@ from app.schemas.checklist import (
 from app.utils.supabase_client import get_supabase_client
 from app.dependencies import get_current_user
 from app.services.checklist_service import generate_checklist_items
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 
 router = APIRouter()
 
@@ -22,7 +22,7 @@ async def generate_checklist(data: ChecklistGenerateRequest, user=Depends(get_cu
     supabase = get_supabase_client()
 
     # Get scheme details
-    scheme = supabase.table("schemes").select("*").eq("id", data.scheme_id).single().execute()
+    scheme = supabase.table("schemes").select("*").eq("id", data.scheme_id).maybe_single().execute()
     if not scheme.data:
         raise HTTPException(status_code=404, detail="Scheme not found")
 
@@ -44,18 +44,31 @@ async def generate_checklist(data: ChecklistGenerateRequest, user=Depends(get_cu
         "status": "active",
     }).execute()
 
+    if not checklist.data:
+        raise HTTPException(status_code=500, detail="Could not create checklist")
     checklist_id = checklist.data[0]["id"]
 
-    # Insert items
+    # Persist the full item list in one request and turn generated offsets into dates.
+    item_rows = []
     for idx, item in enumerate(items):
-        supabase.table("checklist_items").insert({
+        due_date = item.get("due_date")
+        if due_date is None and item.get("due_date_offset_days") is not None:
+            try:
+                due_date = (
+                    date.today() + timedelta(days=max(int(item["due_date_offset_days"]), 0))
+                ).isoformat()
+            except (TypeError, ValueError):
+                due_date = None
+        item_rows.append({
             "checklist_id": checklist_id,
             "title": item["title"],
             "description": item.get("description", ""),
             "is_completed": False,
-            "due_date": item.get("due_date"),
+            "due_date": due_date,
             "sort_order": idx,
-        }).execute()
+        })
+    if item_rows:
+        supabase.table("checklist_items").insert(item_rows).execute()
 
     # Fetch full checklist with items
     return await _get_checklist(checklist_id, user.id)
@@ -71,8 +84,8 @@ async def list_checklists(user=Depends(get_current_user)):
     ).eq("user_id", user.id).order("created_at", desc=True).execute()
 
     formatted = []
-    for cl in checklists.data:
-        cl["scheme_name"] = cl.get("schemes", {}).get("name")
+    for cl in checklists.data or []:
+        cl["scheme_name"] = (cl.get("schemes") or {}).get("name")
         cl["items"] = cl.pop("checklist_items", [])
         formatted.append(cl)
 
@@ -96,29 +109,35 @@ async def update_checklist_item(
     supabase = get_supabase_client()
 
     # Verify checklist ownership
-    checklist = supabase.table("checklists").select("*").eq(
+    checklist = supabase.table("checklists").select("id").eq(
         "id", checklist_id
-    ).eq("user_id", user.id).single().execute()
+    ).eq("user_id", user.id).maybe_single().execute()
 
     if not checklist.data:
         raise HTTPException(status_code=404, detail="Checklist not found")
 
     update_data = {"is_completed": data.is_completed}
     if data.is_completed:
-        update_data["completed_at"] = datetime.utcnow().isoformat()
+        update_data["completed_at"] = datetime.now(timezone.utc).isoformat()
     else:
         update_data["completed_at"] = None
 
-    supabase.table("checklist_items").update(update_data).eq("id", item_id).execute()
+    item_update = supabase.table("checklist_items").update(update_data).eq(
+        "id", item_id
+    ).eq("checklist_id", checklist_id).select("id").execute()
+    if not item_update.data:
+        raise HTTPException(status_code=404, detail="Checklist item not found")
 
     # Check if all items complete → update checklist status
     items = supabase.table("checklist_items").select("is_completed").eq(
         "checklist_id", checklist_id
     ).execute()
 
-    all_complete = all(item["is_completed"] for item in items.data)
-    if all_complete:
-        supabase.table("checklists").update({"status": "completed"}).eq("id", checklist_id).execute()
+    all_complete = bool(items.data) and all(item["is_completed"] for item in items.data)
+    supabase.table("checklists").update({
+        "status": "completed" if all_complete else "active",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", checklist_id).eq("user_id", user.id).execute()
 
     return {"message": "Item updated", "is_completed": data.is_completed}
 
@@ -129,11 +148,11 @@ async def _get_checklist(checklist_id: str, user_id: str) -> dict:
 
     cl = supabase.table("checklists").select(
         "*, checklist_items(*), schemes(name)"
-    ).eq("id", checklist_id).eq("user_id", user_id).single().execute()
+    ).eq("id", checklist_id).eq("user_id", user_id).maybe_single().execute()
 
     if not cl.data:
         raise HTTPException(status_code=404, detail="Checklist not found")
 
-    cl.data["scheme_name"] = cl.data.get("schemes", {}).get("name")
+    cl.data["scheme_name"] = (cl.data.get("schemes") or {}).get("name")
     cl.data["items"] = cl.data.pop("checklist_items", [])
     return cl.data
