@@ -15,6 +15,8 @@ export default defineConfig({
     },
   },
   server: {
-    allowedHosts: 'all',
+    allowedHosts: [
+      "smith-sight-newsletter-recorder.trycloudflare.com",
+    ],
   },
 })
