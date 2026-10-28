@@ -30,6 +30,8 @@ ALTER TABLE public.user_profiles
   ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'citizen'
   CHECK (role IN ('citizen', 'admin'));
 
+GRANT SELECT, INSERT, UPDATE ON public.user_profiles TO service_role;
+
 -- ─── 2. Schemes ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.schemes (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

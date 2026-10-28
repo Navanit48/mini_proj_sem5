@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-me-in-production"
 
     # ─── CORS ───
-    CORS_ORIGINS: str = "http://localhost:5173"
+    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
 
     # ─── Supabase ───
     SUPABASE_URL: str = ""
