@@ -5,7 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 const Topbar = () => {
   const { user } = useAuth();
 
-  const displayName = user?.user_metadata?.full_name || 'Citizen';
+  const displayName = user?.profile?.full_name || 'Citizen';
   const initials = displayName
     .split(' ')
     .map((n) => n[0])

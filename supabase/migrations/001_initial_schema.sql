@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID UNIQUE NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name TEXT,
+  role TEXT NOT NULL DEFAULT 'citizen' CHECK (role IN ('citizen', 'admin')),
   date_of_birth DATE,
   gender TEXT CHECK (gender IN ('male', 'female', 'other')),
   state TEXT,
@@ -24,6 +25,10 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE public.user_profiles
+  ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'citizen'
+  CHECK (role IN ('citizen', 'admin'));
 
 -- ─── 2. Schemes ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.schemes (

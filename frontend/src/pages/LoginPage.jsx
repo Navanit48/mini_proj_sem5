@@ -27,18 +27,6 @@ const LoginPage = () => {
     }
   };
 
-  const handleDemoLogin = async () => {
-    setIsSubmitting(true);
-    try {
-      await login('navanit@aidflow.dev', 'demo');
-      navigate('/dashboard');
-    } catch (err) {
-      setError(err.message || 'Failed to login');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-background flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden">
       {/* Background accents */}
@@ -82,7 +70,7 @@ const LoginPage = () => {
             <div className="mb-5 bg-primary/8 border border-primary/15 text-primary px-4 py-3 rounded-xl flex items-start gap-3 text-sm">
               <Info className="w-4 h-4 shrink-0 mt-0.5" />
               <span className="text-xs leading-relaxed">
-                <strong>Demo Mode</strong> — Supabase not configured. Enter any email and password, or use the demo button below.
+                <strong>Supabase is not configured.</strong> Set the frontend Supabase URL and anon key to sign in.
               </span>
             </div>
           )}
@@ -145,19 +133,6 @@ const LoginPage = () => {
             </button>
           </form>
 
-          {/* Demo login shortcut */}
-          {isDemoMode && (
-            <div className="mt-4 pt-4 border-t border-border/30">
-              <button
-                onClick={handleDemoLogin}
-                disabled={isSubmitting}
-                className="w-full flex justify-center items-center gap-2 py-2.5 px-4 rounded-xl text-sm font-medium text-muted-foreground bg-secondary/50 border border-border/40 hover:bg-secondary hover:text-foreground transition-all disabled:opacity-70"
-              >
-                <Sparkles className="w-4 h-4" />
-                Continue as Demo User
-              </button>
-            </div>
-          )}
         </div>
       </motion.div>
     </div>

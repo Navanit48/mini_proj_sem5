@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 
 const WelcomeHeader = () => {
   const { user } = useAuth();
-  const firstName = user?.user_metadata?.full_name?.split(' ')[0] || 'Navanit';
+  const firstName = user?.profile?.full_name?.split(' ')[0] || 'Citizen';
 
   // Get greeting based on time of day
   const hour = new Date().getHours();

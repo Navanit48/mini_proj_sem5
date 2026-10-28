@@ -8,6 +8,7 @@ const RegisterPage = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { register } = useAuth();
   const navigate = useNavigate();
@@ -18,8 +19,12 @@ const RegisterPage = () => {
     setIsSubmitting(true);
     
     try {
-      await register(email, password, fullName);
-      navigate('/dashboard');
+      const result = await register(email, password, fullName);
+      if (result.needsEmailConfirmation) {
+        setMessage('Check your email to confirm your account, then log in.');
+      } else {
+        navigate('/dashboard');
+      }
     } catch (err) {
       setError(err.response?.data?.detail || err.message || 'Failed to register');
     } finally {
@@ -58,6 +63,8 @@ const RegisterPage = () => {
               <span>{error}</span>
             </div>
           )}
+
+          {message && <p className="mb-4 text-sm text-emerald-700">{message}</p>}
 
           <form className="space-y-6" onSubmit={handleSubmit}>
             <div>

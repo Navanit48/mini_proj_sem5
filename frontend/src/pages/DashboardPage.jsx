@@ -6,8 +6,6 @@ import {
   ShieldCheck,
   FileText,
   Clock,
-  CheckCircle,
-  Bell,
   Loader2,
 } from 'lucide-react';
 
@@ -24,6 +22,7 @@ const DashboardPage = () => {
   const { user } = useAuth();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const fetchDashboard = async () => {
@@ -32,14 +31,7 @@ const DashboardPage = () => {
         setStats(response.data);
       } catch (error) {
         console.error('Failed to load dashboard stats', error);
-        // Fallback placeholder data for UI demo
-        setStats({
-          eligible_schemes: 14,
-          pending_documents: 3,
-          applications_in_progress: 5,
-          completed_checks: 28,
-          reminder_count: 4,
-        });
+        setError('Dashboard data could not be loaded. Please try again.');
       } finally {
         setLoading(false);
       }
@@ -66,49 +58,28 @@ const DashboardPage = () => {
       <WelcomeHeader />
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+      {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <StatCard
-          title="Eligible Schemes"
-          value={stats?.eligible_schemes ?? 14}
+          title="Matched Schemes"
+          value={stats?.matched_schemes ?? 0}
           icon={ShieldCheck}
           accentColor="primary"
-          trend={12}
-          trendLabel="vs. last month"
           delay={1}
         />
         <StatCard
-          title="Pending Documents"
-          value={stats?.pending_documents ?? 3}
+          title="Pending Tasks"
+          value={stats?.pending_tasks ?? 0}
           icon={FileText}
           accentColor="amber"
-          subtitle="Needs attention"
           delay={2}
         />
         <StatCard
-          title="Applications In Progress"
-          value={stats?.applications_in_progress ?? 5}
+          title="Uploaded Documents"
+          value={stats?.uploaded_documents ?? 0}
           icon={Clock}
           accentColor="sky"
-          trend={8}
-          trendLabel="2 nearing deadline"
           delay={3}
-        />
-        <StatCard
-          title="Completed Checks"
-          value={stats?.completed_checks ?? 28}
-          icon={CheckCircle}
-          accentColor="emerald"
-          trend={23}
-          trendLabel="All time"
-          delay={4}
-        />
-        <StatCard
-          title="Reminders"
-          value={stats?.reminder_count ?? 4}
-          icon={Bell}
-          accentColor="rose"
-          subtitle="Due this week"
-          delay={5}
         />
       </div>
 

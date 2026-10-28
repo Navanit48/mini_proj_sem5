@@ -9,14 +9,6 @@ const DEMO_MODE = import.meta.env.VITE_SUPABASE_URL?.includes('placeholder') ||
                   import.meta.env.VITE_SUPABASE_URL?.includes('your-project-ref') ||
                   !import.meta.env.VITE_SUPABASE_URL;
 
-const DEMO_USER = {
-  id: 'demo-user-001',
-  email: 'navanit@aidflow.dev',
-  user_metadata: {
-    full_name: 'Navanit Sharma',
-  },
-};
-
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
@@ -25,42 +17,37 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     // If demo mode, check for a persisted demo session
     if (DEMO_MODE) {
-      const demoSession = localStorage.getItem('aidflow_demo_session');
-      if (demoSession) {
-        setUser(DEMO_USER);
-        setSession({ user: DEMO_USER, access_token: 'demo-token' });
-      }
+      localStorage.removeItem('aidflow_demo_session');
       setLoading(false);
       return;
     }
 
-    // Check active sessions and sets the user
-    const initializeAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session) {
-        setSession(session);
-        setUser(session.user);
-        // Inject token for Axios
-        window.__AIDFLOW_TOKEN__ = session.access_token;
+    const applySession = async (activeSession) => {
+      setSession(activeSession);
+      if (!activeSession) {
+        setUser(null);
+        delete window.__AIDFLOW_TOKEN__;
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      window.__AIDFLOW_TOKEN__ = activeSession.access_token;
+      try {
+        const { data } = await api.get('/auth/me');
+        setUser({ ...activeSession.user, profile: data.profile, role: data.role });
+      } catch {
+        setUser(null);
+        setTimeout(() => supabase.auth.signOut(), 0);
+      } finally {
+        setLoading(false);
+      }
     };
 
-    initializeAuth();
+    supabase.auth.getSession().then(({ data: { session } }) => applySession(session));
 
     // Listen for changes on auth state
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (session?.access_token) {
-        window.__AIDFLOW_TOKEN__ = session.access_token;
-      } else {
-        delete window.__AIDFLOW_TOKEN__;
-      }
-      
-      setLoading(false);
+      applySession(session);
     });
 
     // Listen for Axios 401s
@@ -68,7 +55,7 @@ export function AuthProvider({ children }) {
       // Attempt to refresh or logout
       const { data, error } = await supabase.auth.refreshSession();
       if (error || !data.session) {
-        await logout();
+        await supabase.auth.signOut({ scope: 'local' });
       }
     };
     
@@ -81,75 +68,61 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = async (email, password) => {
-    // Demo mode: accept any credentials
     if (DEMO_MODE) {
-      const demoUser = {
-        ...DEMO_USER,
-        email: email || DEMO_USER.email,
-        user_metadata: {
-          full_name: email?.split('@')[0]
-            ? email.split('@')[0].charAt(0).toUpperCase() + email.split('@')[0].slice(1)
-            : DEMO_USER.user_metadata.full_name,
-        },
-      };
-      setUser(demoUser);
-      setSession({ user: demoUser, access_token: 'demo-token' });
-      localStorage.setItem('aidflow_demo_session', 'true');
-      return { user: demoUser };
+      throw new Error('Supabase is not configured');
     }
 
-    // Real Supabase auth
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { data } = await api.post('/auth/login', {
       email,
       password,
     });
-    
+    const { data: sessionData, error } = await supabase.auth.setSession({
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+    });
     if (error) throw error;
-    return data;
+    window.__AIDFLOW_TOKEN__ = sessionData.session.access_token;
+    const { data: profileData } = await api.get('/auth/me');
+    setSession(sessionData.session);
+    setUser({ ...sessionData.user, profile: profileData.profile, role: profileData.role });
+    return sessionData;
   };
 
   const register = async (email, password, fullName) => {
-    // Demo mode: treat register same as login
     if (DEMO_MODE) {
-      const demoUser = {
-        ...DEMO_USER,
-        email,
-        user_metadata: { full_name: fullName || 'Demo User' },
-      };
-      setUser(demoUser);
-      setSession({ user: demoUser, access_token: 'demo-token' });
-      localStorage.setItem('aidflow_demo_session', 'true');
-      return { user: demoUser };
+      throw new Error('Supabase is not configured');
     }
 
-    // Proxy through our backend to ensure user profile is created Atomically
-    const response = await api.post('/auth/register', {
+    const { data } = await api.post('/auth/register', {
       email,
       password,
       full_name: fullName
     });
-    
-    // Also sign in via client to set local session
-    if (response.data) {
-        await supabase.auth.signInWithPassword({email, password});
+    if (!data.access_token || !data.refresh_token) {
+      return { needsEmailConfirmation: true };
     }
-    
-    return response.data;
+    const { data: sessionData, error } = await supabase.auth.setSession({
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+    });
+    if (error) throw error;
+    window.__AIDFLOW_TOKEN__ = sessionData.session.access_token;
+    const { data: profileData } = await api.get('/auth/me');
+    setSession(sessionData.session);
+    setUser({ ...sessionData.user, profile: profileData.profile, role: profileData.role });
+    return sessionData;
   };
 
   const logout = async () => {
     if (DEMO_MODE) {
-      setUser(null);
-      setSession(null);
-      localStorage.removeItem('aidflow_demo_session');
       return;
     }
 
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-    setUser(null);
-    setSession(null);
-    delete window.__AIDFLOW_TOKEN__;
+    try {
+      await api.post('/auth/logout');
+    } finally {
+      await supabase.auth.signOut({ scope: 'local' });
+    }
   };
 
   const value = {
