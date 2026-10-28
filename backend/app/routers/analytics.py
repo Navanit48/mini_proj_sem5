@@ -15,31 +15,49 @@ async def get_dashboard_stats(user=Depends(get_current_user)):
     """Get personal dashboard statistics for the user."""
     supabase = get_supabase_client()
 
-    # 1. Total Matched Schemes
+    profile_response = supabase.table("user_profiles").select("*").eq(
+        "user_id", user.id
+    ).maybe_single().execute()
+    profile = profile_response.data or {}
+    completion_fields = (
+        "full_name",
+        "phone",
+        "state",
+        "district",
+        "occupation",
+        "annual_income",
+        "category",
+    )
+    completed_profile_fields = sum(
+        profile.get(field) is not None and profile.get(field) != ""
+        for field in completion_fields
+    )
+
     eligibility = supabase.table("eligibility_checks").select(
         "matched_count"
     ).eq("user_id", user.id).order("checked_at", desc=True).limit(1).execute()
 
-    matched_schemes_count = 0
-    if eligibility.data:
-        matched_schemes_count = eligibility.data[0]["matched_count"]
+    eligible_schemes_count = (eligibility.data[0]["matched_count"] or 0) if eligibility.data else 0
 
-    # 2. Pending Checklist Items
-    pending_items = supabase.table("checklist_items").select(
+    checklist_items = supabase.table("checklist_items").select(
         "id, is_completed, checklists!inner(user_id)"
-    ).eq("checklists.user_id", user.id).eq("is_completed", False).execute()
-    pending_tasks_count = len(pending_items.data)
+    ).eq("checklists.user_id", user.id).execute()
+    checklist_total = len(checklist_items.data)
+    checklist_completed = sum(item.get("is_completed") is True for item in checklist_items.data)
 
-    # 3. Total Documents Uploaded
     documents = supabase.table("documents").select(
         "id", count="exact"
     ).eq("user_id", user.id).execute()
-    documents_count = documents.count or 0
 
     return {
-        "matched_schemes": matched_schemes_count,
-        "pending_tasks": pending_tasks_count,
-        "uploaded_documents": documents_count,
+        "profile_completion": round(completed_profile_fields / len(completion_fields) * 100),
+        "eligible_schemes": eligible_schemes_count,
+        "uploaded_documents": documents.count or 0,
+        "checklist_progress": {
+            "completed": checklist_completed,
+            "total": checklist_total,
+            "percentage": round(checklist_completed / checklist_total * 100) if checklist_total else 0,
+        },
     }
 
 

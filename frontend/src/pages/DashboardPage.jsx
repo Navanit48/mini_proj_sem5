@@ -1,25 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { useAuth } from '../context/AuthContext';
 import api from '../lib/api';
 import {
+  UserRound,
   ShieldCheck,
   FileText,
-  Clock,
+  CheckCircle2,
   Loader2,
 } from 'lucide-react';
 
-import {
-  WelcomeHeader,
-  StatCard,
-  AnalyticsChart,
-  DocumentStatusChart,
-  RemindersSection,
-  AIInsightCard,
-} from '../components/dashboard';
+import { WelcomeHeader, StatCard } from '../components/dashboard';
 
 const DashboardPage = () => {
-  const { user } = useAuth();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -57,47 +49,66 @@ const DashboardPage = () => {
       {/* Greeting */}
       <WelcomeHeader />
 
-      {/* Summary Cards */}
       {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard
-          title="Matched Schemes"
-          value={stats?.matched_schemes ?? 0}
-          icon={ShieldCheck}
-          accentColor="primary"
-          delay={1}
-        />
-        <StatCard
-          title="Pending Tasks"
-          value={stats?.pending_tasks ?? 0}
-          icon={FileText}
-          accentColor="amber"
-          delay={2}
-        />
-        <StatCard
-          title="Uploaded Documents"
-          value={stats?.uploaded_documents ?? 0}
-          icon={Clock}
-          accentColor="sky"
-          delay={3}
-        />
-      </div>
-
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-        <div className="lg:col-span-3">
-          <AnalyticsChart />
-        </div>
-        <div className="lg:col-span-2">
-          <DocumentStatusChart />
-        </div>
-      </div>
-
-      {/* Bottom Row: Reminders + AI Insights */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <RemindersSection />
-        <AIInsightCard />
-      </div>
+      {!error && stats && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <StatCard
+              title="Profile Completion"
+              value={`${stats.profile_completion}%`}
+              icon={UserRound}
+              accentColor="primary"
+              subtitle="Core profile fields completed"
+              delay={1}
+            />
+            <StatCard
+              title="Eligible Schemes"
+              value={stats.eligible_schemes}
+              icon={ShieldCheck}
+              accentColor="emerald"
+              subtitle="From your latest eligibility check"
+              delay={2}
+            />
+            <StatCard
+              title="Uploaded Documents"
+              value={stats.uploaded_documents}
+              icon={FileText}
+              accentColor="sky"
+              subtitle="Documents in your account"
+              delay={3}
+            />
+            <StatCard
+              title="Checklist Progress"
+              value={`${stats.checklist_progress.percentage}%`}
+              icon={CheckCircle2}
+              accentColor="amber"
+              subtitle={`${stats.checklist_progress.completed} of ${stats.checklist_progress.total} tasks completed`}
+              delay={4}
+            />
+          </div>
+          <div className="bg-card border border-border/50 rounded-2xl p-5 sm:p-6">
+            <div className="flex items-center justify-between gap-4 mb-3">
+              <h2 className="text-sm font-semibold text-foreground">Application checklist progress</h2>
+              <span className="text-sm text-muted-foreground">
+                {stats.checklist_progress.completed}/{stats.checklist_progress.total}
+              </span>
+            </div>
+            <div
+              className="h-2 rounded-full bg-secondary overflow-hidden"
+              role="progressbar"
+              aria-label="Application checklist progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={stats.checklist_progress.percentage}
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-500"
+                style={{ width: `${stats.checklist_progress.percentage}%` }}
+              />
+            </div>
+          </div>
+        </>
+      )}
     </motion.div>
   );
 };
