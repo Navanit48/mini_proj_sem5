@@ -141,6 +141,7 @@ const DocumentsPage = () => {
     try {
       const response = await api.get('/documents');
       setDocuments(response.data.documents || []);
+      setLoadError('');
     } catch (error) {
       setLoadError(error.response?.data?.detail || 'Documents could not be loaded. Please try again.');
     } finally {

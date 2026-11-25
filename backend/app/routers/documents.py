@@ -11,6 +11,10 @@ from app.schemas.document import (
     OCRResultResponse,
 )
 from app.utils.supabase_client import get_supabase_client, safe_data
+from app.utils.ocr_compat import (
+    fetch_ocr_result_for_document,
+    fetch_ocr_results_by_document_ids,
+)
 from app.utils.storage import upload_file, get_signed_url, delete_file
 from app.dependencies import get_current_user
 from app.config import get_settings
@@ -95,17 +99,10 @@ async def list_documents(user=Depends(get_current_user)):
     # Batch-load OCR results so listing documents does not create N+1 database queries.
     docs = []
     raw_documents = response.data or []
-    verification_by_document = {}
-    document_ids = [doc["id"] for doc in raw_documents]
-    if document_ids:
-        verification_response = supabase.table("ocr_results").select(
-            "id,document_id,extracted_fields,confidence_score,processed_at,"
-            "detected_document_type,document_type_confidence,verification_status,"
-            "validation_summary,mismatches,warnings"
-        ).in_("document_id", document_ids).execute()
-        verification_by_document = {
-            row["document_id"]: row for row in (verification_response.data or [])
-        }
+    docs_by_id = {doc["id"]: doc for doc in raw_documents if doc.get("id")}
+    verification_by_document = fetch_ocr_results_by_document_ids(
+        supabase, list(docs_by_id.keys()), docs_by_id
+    )
 
     for doc in raw_documents:
         doc["signed_url"] = get_signed_url(doc["storage_path"])
@@ -129,12 +126,8 @@ async def get_document(document_id: str, user=Depends(get_current_user)):
 
     doc = response.data[0]
     doc["signed_url"] = get_signed_url(doc["storage_path"])
-    verification = supabase.table("ocr_results").select(
-        "id,document_id,extracted_fields,confidence_score,processed_at,"
-        "detected_document_type,document_type_confidence,verification_status,"
-        "validation_summary,mismatches,warnings"
-    ).eq("document_id", document_id).maybe_single().execute()
-    return DocumentDetailResponse(document=doc, verification=safe_data(verification))
+    verification = fetch_ocr_result_for_document(supabase, document_id, doc)
+    return DocumentDetailResponse(document=doc, verification=verification)
 
 
 @router.post("/{document_id}/verify", status_code=202)

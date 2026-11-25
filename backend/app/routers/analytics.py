@@ -6,6 +6,7 @@ Provides dashboard data and aggregated statistics.
 import logging
 
 from fastapi import APIRouter, Depends
+from app.utils.ocr_compat import fetch_ocr_results_by_document_ids
 from app.utils.supabase_client import get_supabase_client, safe_data
 from app.dependencies import get_current_user, require_admin
 from app.services.ai_recommendation import get_recommendation_provider
@@ -67,17 +68,14 @@ async def get_dashboard_stats(user=Depends(get_current_user)):
     checklist_completed = sum(item.get("is_completed") is True for item in checklist_rows)
 
     documents = supabase.table("documents").select(
-        "id,document_category,status", count="exact"
+        "id,document_category,status,verification_status", count="exact"
     ).eq("user_id", user.id).execute()
     document_rows = documents.data or []
-    verification_rows = []
-    document_ids = [document.get("id") for document in document_rows if document.get("id")]
-    if document_ids:
-        verification_response = supabase.table("ocr_results").select(
-            "document_id,verification_status,confidence_score"
-        ).in_("document_id", document_ids).execute()
-        verification_rows = verification_response.data or []
-    verification_by_id = {row["document_id"]: row for row in verification_rows}
+    docs_by_id = {document["id"]: document for document in document_rows if document.get("id")}
+    verification_by_id = fetch_ocr_results_by_document_ids(
+        supabase, list(docs_by_id.keys()), docs_by_id
+    )
+    verification_rows = list(verification_by_id.values())
     verification_summary = {
         "preliminary_match": sum(row.get("verification_status") == "preliminary_match" for row in verification_rows),
         "needs_review": sum(row.get("verification_status") == "needs_review" for row in verification_rows),

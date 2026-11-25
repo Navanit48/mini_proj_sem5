@@ -10,6 +10,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.services.document_verification import verify_document
+from app.utils.ocr_compat import save_ocr_verification
 from app.utils.storage import download_file
 from app.utils.supabase_client import get_supabase_client, safe_data
 
@@ -104,42 +105,46 @@ def process_document_ocr(
         profile = safe_data(profile_response) or {}
         verification = verify_document(ocr_text, declared_type, profile, ocr_confidence)
 
-        supabase.table("ocr_results").upsert({
-            "document_id": document_id,
-            # Raw OCR can contain identity and financial data. Persist only the fields needed for review.
-            "raw_text": None,
-            "extracted_fields": verification["extracted_fields"],
-            "confidence_score": verification["confidence_score"],
-            "detected_document_type": verification["detected_document_type"],
-            "document_type_confidence": verification["document_type_confidence"],
-            "verification_status": verification["verification_status"],
-            "validation_summary": verification["validation_summary"],
-            "mismatches": verification["mismatches"],
-            "warnings": verification["warnings"],
-            "processed_at": datetime.now(timezone.utc).isoformat(),
-        }, on_conflict="document_id").execute()
-        supabase.table("documents").update({"status": "completed"}).eq(
-            "id", document_id
-        ).eq("user_id", user_id).execute()
+        save_ocr_verification(
+            supabase,
+            document_id,
+            user_id,
+            "completed",
+            {
+                # Raw OCR can contain identity and financial data. Persist only the fields needed for review.
+                "raw_text": None,
+                "extracted_fields": verification["extracted_fields"],
+                "confidence_score": verification["confidence_score"],
+                "detected_document_type": verification["detected_document_type"],
+                "document_type_confidence": verification["document_type_confidence"],
+                "verification_status": verification["verification_status"],
+                "validation_summary": verification["validation_summary"],
+                "mismatches": verification["mismatches"],
+                "warnings": verification["warnings"],
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
     except Exception:
         logger.exception("Preliminary document verification failed for document %s", document_id)
         try:
-            supabase.table("documents").update({"status": "failed"}).eq(
-                "id", document_id
-            ).eq("user_id", user_id).execute()
-            supabase.table("ocr_results").upsert({
-                "document_id": document_id,
-                "raw_text": None,
-                "extracted_fields": {},
-                "confidence_score": 0,
-                "detected_document_type": declared_type,
-                "document_type_confidence": 0,
-                "verification_status": "unreadable",
-                "validation_summary": "Preliminary verification could not be completed. Review the file or upload a clearer scan.",
-                "mismatches": [],
-                "warnings": ["OCR processing failed; no document details were confirmed."],
-                "processed_at": datetime.now(timezone.utc).isoformat(),
-            }, on_conflict="document_id").execute()
+            save_ocr_verification(
+                supabase,
+                document_id,
+                user_id,
+                "failed",
+                {
+                    "raw_text": None,
+                    "extracted_fields": {},
+                    "confidence_score": 0,
+                    "detected_document_type": declared_type,
+                    "document_type_confidence": 0,
+                    "verification_status": "unreadable",
+                    "validation_summary": "Preliminary verification could not be completed. Review the file or upload a clearer scan.",
+                    "mismatches": [],
+                    "warnings": ["OCR processing failed; no document details were confirmed."],
+                    "processed_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
         except Exception:
             logger.exception("Could not save failure state for document %s", document_id)
 

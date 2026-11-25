@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.schemas.user import UserProfileUpdate
+from app.utils.ocr_compat import fetch_ocr_results_by_document_ids
 from app.utils.supabase_client import safe_data
 
 PROFILE_FIELDS = (
@@ -83,7 +84,8 @@ def _load_owned_documents(supabase, user_id: str, document_ids: list[str]) -> li
     if not document_ids:
         return []
     response = supabase.table("documents").select(
-        "id,user_id,file_name,file_type,document_category,status,file_size_bytes,uploaded_at"
+        "id,user_id,file_name,file_type,document_category,status,file_size_bytes,uploaded_at,"
+        "verification_status,validation_summary,mismatches,warnings"
     ).eq("user_id", user_id).in_("id", document_ids).execute()
     documents = response.data or []
     if len({doc["id"] for doc in documents}) != len(set(document_ids)):
@@ -91,14 +93,12 @@ def _load_owned_documents(supabase, user_id: str, document_ids: list[str]) -> li
     return documents
 
 
-def _verification_by_document(supabase, document_ids: list[str]) -> dict[str, dict[str, Any]]:
-    if not document_ids:
-        return {}
-    response = supabase.table("ocr_results").select(
-        "document_id,extracted_fields,confidence_score,verification_status,"
-        "detected_document_type,validation_summary,mismatches,warnings"
-    ).in_("document_id", document_ids).execute()
-    return {row["document_id"]: row for row in (response.data or [])}
+def _verification_by_document(
+    supabase,
+    document_ids: list[str],
+    docs_by_id: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    return fetch_ocr_results_by_document_ids(supabase, document_ids, docs_by_id)
 
 
 def create_application_preview(
@@ -108,10 +108,12 @@ def create_application_preview(
     scheme = _load_scheme(supabase, scheme_id)
     eligibility = _load_eligibility(supabase, user_id, scheme_id, eligibility_check_id)
     documents_response = supabase.table("documents").select(
-        "id,user_id,file_name,file_type,document_category,status,file_size_bytes,uploaded_at"
+        "id,user_id,file_name,file_type,document_category,status,file_size_bytes,uploaded_at,"
+        "verification_status,validation_summary,mismatches,warnings"
     ).eq("user_id", user_id).order("uploaded_at", desc=True).execute()
     documents = documents_response.data or []
-    verifications = _verification_by_document(supabase, [doc["id"] for doc in documents])
+    docs_by_id = {doc["id"]: doc for doc in documents if doc.get("id")}
+    verifications = _verification_by_document(supabase, list(docs_by_id.keys()), docs_by_id)
     for doc in documents:
         doc["verification"] = verifications.get(doc["id"])
     missing_profile_fields = [
@@ -146,7 +148,8 @@ def submit_application(
     profile_snapshot = {**preview["profile"], **validated_overrides}
     profile_snapshot = {field: profile_snapshot.get(field) for field in PROFILE_FIELDS}
     documents = _load_owned_documents(supabase, user_id, document_ids)
-    verification = _verification_by_document(supabase, [doc["id"] for doc in documents])
+    docs_by_id = {doc["id"]: doc for doc in documents if doc.get("id")}
+    verification = _verification_by_document(supabase, list(docs_by_id.keys()), docs_by_id)
     document_snapshots = []
     for document in documents:
         result = verification.get(document["id"], {})

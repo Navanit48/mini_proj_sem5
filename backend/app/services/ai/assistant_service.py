@@ -4,14 +4,43 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 
 from app.services.ai.deterministic_provider import DeterministicAssistantProvider
 from app.services.ai.provider import AssistantProvider
 from app.services.ai_recommendation import get_recommendation_provider
+from app.utils.ocr_compat import is_missing_column_error
 from app.utils.supabase_client import safe_data
+
+
+def _derive_title(messages: list[dict[str, Any]] | None) -> str:
+    """Build a conversation title from the first user message when no title column exists."""
+    for message in messages or []:
+        if message.get("role") == "user" and str(message.get("content") or "").strip():
+            text = str(message["content"]).strip()
+            return text[:117] + ("..." if len(text) > 120 else "")
+    return "New conversation"
+
+
+def _normalize_legacy_messages(
+    messages: list[dict[str, Any]] | None,
+    fallback_timestamp: Any,
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for index, message in enumerate(messages or []):
+        role = message.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        normalized.append({
+            "id": str(message.get("id") or f"msg-{index}"),
+            "role": role,
+            "content": str(message.get("content") or ""),
+            "created_at": message.get("created_at") or fallback_timestamp,
+            "metadata": message.get("metadata") or {},
+        })
+    return normalized
 
 
 class AssistantService:
@@ -20,26 +49,61 @@ class AssistantService:
         self.provider = provider or DeterministicAssistantProvider()
 
     def list_conversations(self, user_id: str) -> list[dict[str, Any]]:
-        response = self.supabase.table("assistant_conversations").select(
-            "id,title,created_at,updated_at"
-        ).eq("user_id", user_id).order("updated_at", desc=True).limit(50).execute()
-        return response.data or []
+        try:
+            response = self.supabase.table("assistant_conversations").select(
+                "id,title,created_at,updated_at"
+            ).eq("user_id", user_id).order("updated_at", desc=True).limit(50).execute()
+            return response.data or []
+        except Exception as error:
+            if not is_missing_column_error(error):
+                raise
+            response = self.supabase.table("assistant_conversations").select(
+                "id,messages,created_at,updated_at"
+            ).eq("user_id", user_id).order("updated_at", desc=True).limit(50).execute()
+            return [
+                {
+                    "id": row["id"],
+                    "title": row.get("title") or _derive_title(row.get("messages")),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+                for row in (response.data or [])
+            ]
 
     def create_conversation(self, user_id: str, title: str | None = None) -> dict[str, Any]:
-        response = self.supabase.table("assistant_conversations").insert({
-            "user_id": user_id,
-            "title": title.strip()[:120] if title and title.strip() else "New conversation",
-        }).execute()
+        clean_title = title.strip()[:120] if title and title.strip() else "New conversation"
+        try:
+            response = self.supabase.table("assistant_conversations").insert({
+                "user_id": user_id,
+                "title": clean_title,
+            }).execute()
+        except Exception as error:
+            if not is_missing_column_error(error):
+                raise
+            response = self.supabase.table("assistant_conversations").insert({
+                "user_id": user_id,
+                "messages": [],
+            }).execute()
         if not response.data:
             raise HTTPException(status_code=500, detail="Could not create assistant conversation")
-        return response.data[0]
+        row = dict(response.data[0])
+        row.setdefault("title", clean_title)
+        return row
 
     def get_conversation(self, user_id: str, conversation_id: str) -> list[dict[str, Any]]:
-        self._owned_conversation(user_id, conversation_id)
-        response = self.supabase.table("assistant_messages").select(
-            "id,role,content,metadata,created_at"
-        ).eq("conversation_id", conversation_id).eq("user_id", user_id).order("created_at").execute()
-        return response.data or []
+        conversation = self._owned_conversation(user_id, conversation_id)
+        try:
+            response = self.supabase.table("assistant_messages").select(
+                "id,role,content,metadata,created_at"
+            ).eq("conversation_id", conversation_id).eq("user_id", user_id).order("created_at").execute()
+            return response.data or []
+        except Exception as error:
+            if not is_missing_column_error(error):
+                raise
+            return _normalize_legacy_messages(
+                conversation.get("messages"),
+                conversation.get("created_at") or datetime.now(timezone.utc).isoformat(),
+            )
 
     def delete_conversation(self, user_id: str, conversation_id: str) -> None:
         self._owned_conversation(user_id, conversation_id)
@@ -50,22 +114,51 @@ class AssistantService:
     def send_message(self, user_id: str, conversation_id: str, question: str) -> dict[str, Any]:
         conversation = self._owned_conversation(user_id, conversation_id)
         clean_question = question.strip()
-        user_row = self._insert_message(user_id, conversation_id, "user", clean_question, {})
         generated = self.provider.generate_response(clean_question, self.load_context(user_id))
         metadata = {
             "scheme_cards": generated.get("scheme_cards", []),
             "actions": generated.get("actions", []),
         }
-        assistant_row = self._insert_message(
-            user_id, conversation_id, "assistant", generated["content"], metadata
-        )
-        updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
-        if conversation.get("title") == "New conversation":
-            updates["title"] = clean_question[:117] + ("..." if len(clean_question) > 120 else "")
-        self.supabase.table("assistant_conversations").update(updates).eq(
-            "id", conversation_id
-        ).eq("user_id", user_id).execute()
-        return {"user_message": user_row, "assistant_message": assistant_row}
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        try:
+            user_row = self._insert_message(user_id, conversation_id, "user", clean_question, {})
+            assistant_row = self._insert_message(
+                user_id, conversation_id, "assistant", generated["content"], metadata
+            )
+            updates: dict[str, Any] = {"updated_at": now_iso}
+            if conversation.get("title") == "New conversation":
+                updates["title"] = clean_question[:117] + ("..." if len(clean_question) > 120 else "")
+            self.supabase.table("assistant_conversations").update(updates).eq(
+                "id", conversation_id
+            ).eq("user_id", user_id).execute()
+            return {"user_message": user_row, "assistant_message": assistant_row}
+        except Exception as error:
+            if not is_missing_column_error(error):
+                raise
+            existing_messages = _normalize_legacy_messages(
+                conversation.get("messages"),
+                conversation.get("created_at") or now_iso,
+            )
+            user_row = {
+                "id": str(uuid4()),
+                "role": "user",
+                "content": clean_question,
+                "created_at": now_iso,
+                "metadata": {},
+            }
+            assistant_row = {
+                "id": str(uuid4()),
+                "role": "assistant",
+                "content": generated["content"],
+                "created_at": now_iso,
+                "metadata": metadata,
+            }
+            self.supabase.table("assistant_conversations").update({
+                "messages": [*existing_messages, user_row, assistant_row],
+                "updated_at": now_iso,
+            }).eq("id", conversation_id).eq("user_id", user_id).execute()
+            return {"user_message": user_row, "assistant_message": assistant_row}
 
     def load_context(self, user_id: str) -> dict[str, Any]:
         profile_response = self.supabase.table("user_profiles").select("*").eq(
@@ -187,9 +280,16 @@ class AssistantService:
             UUID(conversation_id)
         except (ValueError, TypeError):
             raise HTTPException(status_code=404, detail="Conversation not found")
-        response = self.supabase.table("assistant_conversations").select(
-            "id,user_id,title,created_at,updated_at"
-        ).eq("id", conversation_id).eq("user_id", user_id).maybe_single().execute()
+        try:
+            response = self.supabase.table("assistant_conversations").select(
+                "id,user_id,title,created_at,updated_at"
+            ).eq("id", conversation_id).eq("user_id", user_id).maybe_single().execute()
+        except Exception as error:
+            if not is_missing_column_error(error):
+                raise
+            response = self.supabase.table("assistant_conversations").select(
+                "id,user_id,messages,created_at,updated_at"
+            ).eq("id", conversation_id).eq("user_id", user_id).maybe_single().execute()
         data = safe_data(response)
         if not data:
             raise HTTPException(status_code=404, detail="Conversation not found")
