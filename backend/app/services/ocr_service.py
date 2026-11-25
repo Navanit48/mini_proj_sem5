@@ -7,12 +7,14 @@ from app.utils.supabase_client import get_supabase_client
 from app.utils.storage import download_file
 from app.services.ai_service import extract_fields_from_ocr
 from app.config import get_settings
+import logging
 import tempfile
 import os
 import uuid
 
 # Lazy load PaddleOCR to avoid massive memory usage on startup
 _ocr_engine = None
+logger = logging.getLogger(__name__)
 
 def get_ocr_engine():
     global _ocr_engine
@@ -93,7 +95,7 @@ async def process_document_ocr(document_id: str, storage_path: str, file_type: s
         # Update document status
         supabase.table("documents").update({"status": "completed"}).eq("id", document_id).execute()
         
-    except Exception as e:
-        print(f"OCR Error for document {document_id}: {str(e)}")
+    except Exception:
+        logger.error("OCR processing failed for document %s", document_id)
         # Update document status to failed
         supabase.table("documents").update({"status": "failed"}).eq("id", document_id).execute()

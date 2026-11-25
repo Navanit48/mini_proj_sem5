@@ -1,14 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ShieldCheck, User, MapPin, Briefcase, IndianRupee,
-  Calendar, Loader2, CheckCircle2, XCircle, AlertCircle,
-  ChevronRight, ArrowRight, Sparkles, RefreshCw, History,
+  Loader2, CheckCircle2, XCircle, AlertCircle,
+  Sparkles, RefreshCw, History,
   ChevronDown
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
+import AIRecommendationPanel from '../components/eligibility/AIRecommendationPanel';
 
 const getEligibilityStatus = (percentage) => {
   if (percentage >= 70) return 'Eligible';
@@ -31,18 +32,16 @@ const OCCUPATIONS = [
 ];
 
 const FormField = ({ label, children, required }) => (
-  <div className="space-y-1.5">
-    <label className="block text-sm font-medium text-foreground">
-      {label} {required && <span className="text-rose-400">*</span>}
-    </label>
+  <label className="block space-y-1.5 text-sm font-medium text-foreground">
+    <span>{label} {required && <span className="text-rose-400">*</span>}</span>
     {children}
-  </div>
+  </label>
 );
 
 const inputClasses = "w-full px-3.5 py-2.5 bg-secondary/50 border border-border/50 rounded-xl text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary/40 transition-all";
 const selectClasses = "w-full px-3.5 py-2.5 bg-secondary/50 border border-border/50 rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary/40 transition-all appearance-none cursor-pointer";
 
-const ResultCard = ({ result, index }) => {
+const ResultCard = ({ result, index, onCompleteProfile }) => {
   const [expanded, setExpanded] = useState(false);
   const pct = result.match_percentage;
   const status = getEligibilityStatus(pct);
@@ -55,8 +54,8 @@ const ResultCard = ({ result, index }) => {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: index * 0.05 }}
       className={cn(
-        'bg-card border rounded-2xl overflow-hidden transition-all duration-200',
-        isGoodMatch ? 'border-emerald-500/25' : isPartialMatch ? 'border-amber-500/20' : 'border-border/50'
+        'bg-card border border-border/60 rounded-2xl overflow-hidden transition-colors duration-200',
+        'hover:border-border/90'
       )}
     >
       <div className="p-5">
@@ -129,6 +128,10 @@ const ResultCard = ({ result, index }) => {
             </motion.div>
           )}
         </AnimatePresence>
+        <AIRecommendationPanel
+          recommendation={result.ai_recommendation}
+          onCompleteProfile={onCompleteProfile}
+        />
       </div>
     </motion.div>
   );
@@ -164,6 +167,8 @@ const EligibilityPage = () => {
       setProfile(current => ({
         ...current,
         full_name: savedProfile.full_name || current.full_name,
+        date_of_birth: savedProfile.date_of_birth || current.date_of_birth,
+        gender: savedProfile.gender || current.gender,
         state: savedProfile.state || current.state,
         district: savedProfile.district || current.district,
         occupation: savedProfile.occupation || current.occupation,
@@ -500,25 +505,59 @@ const EligibilityPage = () => {
             exit={{ opacity: 0, y: -12 }}
             className="space-y-6"
           >
-            {/* Summary Card */}
-            <div className="bg-card border border-border/50 rounded-2xl p-6">
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 flex items-center justify-center">
-                  <ShieldCheck className="w-7 h-7 text-emerald-400" />
+            <section className="overflow-hidden rounded-2xl border border-border/60 bg-card p-5 sm:p-6">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-secondary/70">
+                    <Sparkles className="h-6 w-6 text-primary" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-foreground">Your AI Summary</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Based on your profile and {results.ai_summary?.evaluated_count ?? totalCount} evaluated scheme rules.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-xl font-bold text-foreground">{matchedCount} Eligible</h3>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    {partialCount} partially eligible · {totalCount} schemes evaluated using your profile
+                <div className="min-w-36 rounded-xl border border-border/60 bg-secondary/25 px-4 py-2.5">
+                  <p className="text-xs text-muted-foreground">Overall Profile Strength</p>
+                  <p className="mt-0.5 text-2xl font-bold text-primary">
+                    {results.ai_summary?.profile_strength ?? 0}%
                   </p>
                 </div>
               </div>
-            </div>
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <div className="rounded-xl border border-border/50 bg-secondary/20 p-4">
+                  <h3 className="text-sm font-semibold text-foreground">You qualify for</h3>
+                  {results.ai_summary?.eligible_schemes?.length ? (
+                    <ul className="mt-2 space-y-1 text-sm text-foreground/85">
+                      {results.ai_summary.eligible_schemes.map((name) => <li key={name}>• {name}</li>)}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-sm text-muted-foreground">No evaluated scheme currently meets the eligible threshold.</p>
+                  )}
+                </div>
+                <div className="rounded-xl border border-border/50 bg-secondary/20 p-4">
+                  <h3 className="text-sm font-semibold text-foreground">You narrowly miss</h3>
+                  {results.ai_summary?.near_misses?.length ? (
+                    <ul className="mt-2 space-y-1 text-sm text-foreground/85">
+                      {results.ai_summary.near_misses.map((name) => <li key={name}>• {name}</li>)}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-sm text-muted-foreground">No scheme is currently in the near-miss range.</p>
+                  )}
+                </div>
+              </div>
+            </section>
 
             {/* Result Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {results.results.map((result, index) => (
-                <ResultCard key={result.scheme_id} result={result} index={index} />
+                <ResultCard
+                  key={result.scheme_id}
+                  result={result}
+                  index={index}
+                  onCompleteProfile={resetForm}
+                />
               ))}
             </div>
           </motion.div>

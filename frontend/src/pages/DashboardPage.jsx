@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import api from '../lib/api';
 import {
@@ -9,7 +9,7 @@ import {
   Loader2,
 } from 'lucide-react';
 
-import { WelcomeHeader, StatCard } from '../components/dashboard';
+import { WelcomeHeader, StatCard, AIInsightCard } from '../components/dashboard';
 
 const DashboardPage = () => {
   const [stats, setStats] = useState(null);
@@ -22,7 +22,6 @@ const DashboardPage = () => {
         const response = await api.get('/analytics/dashboard');
         setStats(response.data);
       } catch (error) {
-        console.error('Failed to load dashboard stats', error);
         setError('Dashboard data could not be loaded. Please try again.');
       } finally {
         setLoading(false);
@@ -107,6 +106,7 @@ const DashboardPage = () => {
               />
             </div>
           </div>
+          <AIInsightCard insights={stats.ai_insights || []} />
         </>
       )}
     </motion.div>

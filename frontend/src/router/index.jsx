@@ -1,5 +1,4 @@
-import React from 'react';
-import { createBrowserRouter, RouterProvider, Navigate, Outlet } from 'react-router-dom';
+import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 // Layouts
@@ -9,11 +8,6 @@ import MainLayout from '../components/layout/MainLayout';
 import LandingPage from '../pages/LandingPage';
 import LoginPage from '../pages/LoginPage';
 import RegisterPage from '../pages/RegisterPage';
-import DashboardPage from '../pages/DashboardPage';
-import SchemesPage from '../pages/SchemesPage';
-import EligibilityPage from '../pages/EligibilityPage';
-import DocumentsPage from '../pages/DocumentsPage';
-import ChecklistsPage from '../pages/ChecklistsPage';
 
 // Protected Route Wrapper
 const ProtectedRoute = () => {
@@ -61,23 +55,39 @@ export const router = createBrowserRouter([
         children: [
           {
             path: '/dashboard',
-            element: <DashboardPage />,
+            lazy: async () => ({
+              Component: (await import('../pages/DashboardPage')).default,
+            }),
           },
           {
             path: '/schemes',
-            element: <SchemesPage />,
+            lazy: async () => ({
+              Component: (await import('../pages/SchemesPage')).default,
+            }),
           },
           {
             path: '/eligibility',
-            element: <EligibilityPage />,
+            lazy: async () => ({
+              Component: (await import('../pages/EligibilityPage')).default,
+            }),
           },
           {
             path: '/documents',
-            element: <DocumentsPage />,
+            lazy: async () => ({
+              Component: (await import('../pages/DocumentsPage')).default,
+            }),
           },
           {
             path: '/checklists',
-            element: <ChecklistsPage />,
+            lazy: async () => ({
+              Component: (await import('../pages/ChecklistsPage')).default,
+            }),
+          },
+          {
+            path: '/assistant',
+            lazy: async () => ({
+              Component: (await import('../pages/AssistantPage')).default,
+            }),
           },
           {
             path: '/analytics',

@@ -1,0 +1,1 @@
+"""Provider-based assistant implementation."""

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Upload, FileText, File, Loader2, Trash2, AlertCircle,
@@ -18,6 +18,7 @@ const DOCUMENT_CATEGORIES = [
   { value: 'domicile', label: 'Domicile Certificate' },
   { value: 'ration_card', label: 'Ration Card' },
   { value: 'bank_passbook', label: 'Bank Passbook' },
+  { value: 'passport_photo', label: 'Passport-size Photo' },
   { value: 'land_record', label: 'Land Record' },
   { value: 'marksheet', label: 'Marksheet / Certificate' },
   { value: 'general', label: 'Other' },
@@ -78,7 +79,9 @@ const DocumentCard = ({ doc, onDelete }) => {
             </a>
           )}
           <button
+            type="button"
             onClick={() => onDelete(doc.id)}
+            aria-label={'Delete ' + doc.file_name}
             className="p-2 rounded-lg text-rose-400/70 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
             title="Delete"
           >
@@ -111,7 +114,6 @@ const DocumentsPage = () => {
       const response = await api.get('/documents');
       setDocuments(response.data.documents || []);
     } catch (error) {
-      console.error('Failed to load documents', error);
       setLoadError(error.response?.data?.detail || 'Documents could not be loaded. Please try again.');
     } finally {
       setLoading(false);
@@ -148,7 +150,6 @@ const DocumentsPage = () => {
       setShowUpload(false);
       setUploadCategory('general');
     } catch (error) {
-      console.error('Upload failed', error);
       setUploadError(error.response?.data?.detail || 'Upload failed. Please try again.');
     } finally {
       setUploading(false);
@@ -161,7 +162,6 @@ const DocumentsPage = () => {
       await api.delete(`/documents/${docId}`);
       setDocuments(prev => prev.filter(d => d.id !== docId));
     } catch (error) {
-      console.error('Delete failed', error);
       setActionError(error.response?.data?.detail || 'Document could not be deleted. Please try again.');
     }
   };
@@ -244,15 +244,16 @@ const DocumentsPage = () => {
             >
               <div className="flex items-center justify-between mb-5">
                 <h3 className="text-lg font-semibold text-foreground">Upload Document</h3>
-                <button onClick={() => !uploading && setShowUpload(false)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors">
+                <button type="button" aria-label="Close upload dialog" onClick={() => !uploading && setShowUpload(false)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
               {/* Category Select */}
               <div className="mb-4">
-                <label className="block text-sm font-medium text-foreground mb-1.5">Document Type</label>
+                <label htmlFor="upload-category" className="block text-sm font-medium text-foreground mb-1.5">Document Type</label>
                 <select
+                  id="upload-category"
                   value={uploadCategory}
                   onChange={e => setUploadCategory(e.target.value)}
                   className="w-full px-3.5 py-2.5 bg-secondary/50 border border-border/50 rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary/40 transition-all appearance-none"
@@ -268,6 +269,15 @@ const DocumentsPage = () => {
                 onDragOver={handleDrag}
                 onDrop={handleDrop}
                 onClick={() => !uploading && fileInputRef.current?.click()}
+                onKeyDown={(event) => {
+                  if ((event.key === 'Enter' || event.key === ' ') && !uploading) {
+                    event.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
+                role="button"
+                tabIndex={uploading ? -1 : 0}
+                aria-label="Choose a PDF or JPEG document to upload"
                 className={cn(
                   'border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-200',
                   dragActive ? 'border-primary bg-primary/5' : 'border-border/50 hover:border-border/80 hover:bg-secondary/20',
@@ -277,6 +287,7 @@ const DocumentsPage = () => {
                 <input
                   ref={fileInputRef}
                   type="file"
+                  aria-label="Select document file"
                   accept={ACCEPTED_TYPES.join(',')}
                   onChange={e => handleUpload(e.target.files)}
                   className="hidden"

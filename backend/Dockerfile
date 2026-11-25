@@ -2,12 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for PaddleOCR and asyncpg
+# Install system dependencies for PaddleOCR and PDF handling
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
     poppler-utils \
-    libpq-dev \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 

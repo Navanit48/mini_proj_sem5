@@ -93,6 +93,11 @@
     @apply bg-background text-foreground;
   }
 
+  :is(button, a, input, select, textarea):focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
   /* Custom scrollbar for the dark theme */
   ::-webkit-scrollbar {
     width: 6px;

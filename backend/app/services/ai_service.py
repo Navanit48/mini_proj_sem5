@@ -4,7 +4,6 @@ Prompt management and integration with Groq.
 """
 
 from app.utils.groq_client import call_groq
-import json
 
 def extract_fields_from_ocr(raw_text: str, document_category: str) -> dict:
     """Extract structured fields from raw OCR text using AI."""

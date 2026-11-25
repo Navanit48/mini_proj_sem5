@@ -1,16 +1,30 @@
 # Node
 node_modules/
 dist/
-.env
+build/
+coverage/
+.npm/
+.npm-local-cache/
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 venv/
 env/
 .venv/
+
+# Local environment files
+.env*
+!.env.example
+
+# Logs and generated files
+*.log
 
 # macOS
 .DS_Store

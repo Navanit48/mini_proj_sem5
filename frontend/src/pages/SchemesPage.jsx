@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, ChevronDown, ExternalLink, Calendar,
@@ -199,12 +199,15 @@ const SchemesPage = () => {
             placeholder="Search schemes by name..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            aria-label="Search schemes by name"
             className="w-full pl-10 pr-4 py-2.5 bg-secondary/50 border border-border/50 rounded-xl text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary/40 transition-all"
             id="schemes-search"
           />
           {searchQuery && (
             <button
+              type="button"
               onClick={() => setSearchQuery('')}
+              aria-label="Clear scheme search"
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
             >
               <X className="w-4 h-4" />
@@ -218,6 +221,8 @@ const SchemesPage = () => {
         {CATEGORIES.map((cat) => (
           <button
             key={cat}
+            type="button"
+            aria-pressed={selectedCategory === cat}
             onClick={() => setSelectedCategory(cat)}
             className={cn(
               'px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all duration-200 border',

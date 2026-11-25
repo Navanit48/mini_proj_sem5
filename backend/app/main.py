@@ -5,9 +5,12 @@ AidFlow AI - FastAPI Application Entry Point
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import logging
 
 from app.config import get_settings
-from app.routers import auth, schemes, eligibility, documents, checklist, analytics, notifications, webhooks
+from app.routers import auth, schemes, eligibility, documents, checklist, analytics, notifications, webhooks, assistant
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -15,10 +18,10 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Startup
     settings = get_settings()
-    print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} starting...")
+    logger.info("%s v%s starting", settings.APP_NAME, settings.APP_VERSION)
     yield
     # Shutdown
-    print(f"👋 {settings.APP_NAME} shutting down...")
+    logger.info("%s shutting down", settings.APP_NAME)
 
 
 def create_app() -> FastAPI:
@@ -53,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(analytics.router, prefix=f"{api_prefix}/analytics", tags=["Analytics"])
     app.include_router(notifications.router, prefix=f"{api_prefix}/notifications", tags=["Notifications"])
     app.include_router(webhooks.router, prefix=f"{api_prefix}/webhooks", tags=["Webhooks"])
+    app.include_router(assistant.router, prefix=f"{api_prefix}/assistant", tags=["Assistant"])
 
     # ─── Health Check ───
     @app.get("/health", tags=["Health"])

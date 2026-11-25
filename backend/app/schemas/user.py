@@ -1,5 +1,5 @@
 """AidFlow AI - User Schemas"""
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import Optional
 from datetime import date, datetime
 

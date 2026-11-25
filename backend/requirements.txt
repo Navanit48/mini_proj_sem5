@@ -3,15 +3,8 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 python-multipart==0.0.9
 
-# Database & ORM
-sqlalchemy==2.0.35
-alembic==1.13.2
-asyncpg==0.29.0
-psycopg2-binary==2.9.9
-
 # Supabase
 supabase==2.7.2
-python-jose[cryptography]==3.3.0
 
 # AI & OCR
 groq==0.11.0
@@ -23,9 +16,6 @@ pdf2image==1.17.0
 # Validation & Config
 pydantic==2.9.2
 pydantic-settings==2.5.2
-
-# Rate Limiting
-slowapi==0.1.9
 
 # HTTP
 httpx==0.27.2

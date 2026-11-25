@@ -1,29 +1,32 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Project Structure
 
-AidFlow AI is a React/Vite frontend with a FastAPI backend and Supabase data layer. Frontend pages, shared components, auth context, routing, and API clients live under `frontend/src/`; static assets are in `frontend/public/` and `frontend/src/assets/`. Backend routes are in `backend/app/routers/`, with schemas, services, utilities, configuration, and dependencies in sibling modules. Supabase bootstrap SQL is under `supabase/migrations/`; Alembic migrations are in `backend/alembic/versions/`. Keep changes in the appropriate layer and update SQL and backend schema together when changing persisted data.
+AidFlow AI is a React/Vite frontend, a FastAPI backend, and a Supabase data layer. Frontend screens are in `frontend/src/pages/`; shared UI is in `components/`, auth state in `context/`, API clients in `lib/`, and routing in `router/`. Backend endpoints, schemas, services, and utilities live under `backend/app/`. Supabase SQL history is in `supabase/migrations/`.
 
-## Build, Test, and Development Commands
+Keep changes within the layer that owns the behavior. When changing persisted data, keep SQL, backend models, and frontend consumers aligned. Supabase migrations are the active schema source.
 
-- `cd frontend && npm install && npm run dev` starts the Vite development server, usually at `http://localhost:5173`.
-- `cd frontend && npm run build` creates the production frontend in `frontend/dist/`; `npm run preview` serves that build locally.
+## Development and Verification
+
+- `cd frontend && npm install && npm run dev` starts the Vite app.
+- `cd frontend && npm run build` checks and bundles the production frontend.
 - `cd backend && python -m venv venv && source venv/bin/activate && pip install -r requirements.txt` prepares the API environment.
-- `cd backend && uvicorn app.main:app --reload` runs the API at `http://localhost:8000`.
-- `docker compose up --build` starts the configured services when the required environment variables are set.
+- `cd backend && uvicorn app.main:app --reload` starts FastAPI.
+- `cd backend && python -m unittest discover -s tests -v` runs backend unit tests.
+- `docker compose up --build` starts the containerized app when environment values are configured.
 
-## Coding Style & Naming Conventions
+There is no configured frontend lint or formatting command. Keep imports and formatting consistent with adjacent code.
 
-Follow existing patterns: four-space indentation and `snake_case` for Python modules, functions, and variables; React components and page files use `PascalCase`, while JavaScript variables and functions use `camelCase`. Keep API request and response shapes aligned with `backend/app/schemas/` and frontend consumers. No formatter or linter is configured in the repository, so keep diffs focused and consistent with adjacent code.
+## Style and Naming
 
-## Testing Guidelines
+Use four spaces and `snake_case` for Python files, functions, and variables. Use `PascalCase` for React components/pages and `camelCase` for frontend variables and functions. Keep reusable UI in `components/`; keep database or provider logic out of page components.
 
-No project test suite or test command is currently configured. For frontend changes, run `npm run build`. For backend changes, start the API and exercise affected endpoints through the local API docs at `/docs`; add automated tests only when introducing a test setup consistent with the project.
+## Data, Security, and Configuration
 
-## Commit & Pull Request Guidelines
+Store local settings in ignored `.env` files. Frontend variables use the `VITE_` prefix and may contain only public values. Keep Supabase service-role credentials on the backend. Backend code using the service client must scope user records to the authenticated user. Enable RLS and add ownership policies for new user-owned tables.
 
-Recent commits use short, imperative descriptions, with some Conventional Commit prefixes such as `feat:`. Keep commits focused and use a concise subject (for example, `fix: stabilize profile lookup`). Pull requests should explain the behavior changed, list verification steps, link related issues when available, and include screenshots for visible UI changes.
+Review migrations before applying them. Do not rewrite already-applied migrations; add a numbered migration for schema changes.
 
-## Security & Configuration
+## Pull Requests
 
-Use local environment files for Supabase, database, and API credentials; never commit secrets. Configure frontend and backend environment values according to their existing `.env` usage and `docker-compose.yml`. Treat Supabase migrations as deployable changes: review SQL and apply it to the intended project before relying on the updated schema.
+Use a concise imperative or Conventional Commit subject, such as `fix: scope assistant history by user`. Describe behavior changes, list verification steps, and include screenshots for visible UI changes. Do not commit credentials, generated builds, caches, or local environment files.

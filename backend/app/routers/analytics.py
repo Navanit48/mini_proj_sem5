@@ -3,11 +3,15 @@ AidFlow AI - Analytics Router
 Provides dashboard data and aggregated statistics.
 """
 
+import logging
+
 from fastapi import APIRouter, Depends
 from app.utils.supabase_client import get_supabase_client
 from app.dependencies import get_current_user, require_admin
+from app.services.ai_recommendation import get_recommendation_provider
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/dashboard")
@@ -34,10 +38,25 @@ async def get_dashboard_stats(user=Depends(get_current_user)):
     )
 
     eligibility = supabase.table("eligibility_checks").select(
-        "matched_count"
+        "matched_count,submitted_profile,eligibility_results(*,schemes(name,benefits_summary,deadline,application_url,category))"
     ).eq("user_id", user.id).order("checked_at", desc=True).limit(1).execute()
 
     eligible_schemes_count = (eligibility.data[0]["matched_count"] or 0) if eligibility.data else 0
+    latest_check = eligibility.data[0] if eligibility.data else {}
+    ai_profile = latest_check.get("submitted_profile") or profile
+    ai_results = []
+    ai_schemes = {}
+    for result in latest_check.get("eligibility_results") or []:
+        scheme = result.get("schemes") or {}
+        scheme_id = str(result["scheme_id"])
+        ai_results.append({
+            "scheme_id": scheme_id,
+            "scheme_name": scheme.get("name", "Unknown"),
+            "match_percentage": result.get("match_percentage") or 0,
+            "matched_rules": result.get("matched_rules") or [],
+            "failed_rules": result.get("failed_rules") or [],
+        })
+        ai_schemes[scheme_id] = scheme
 
     checklist_items = supabase.table("checklist_items").select(
         "id, is_completed, checklists!inner(user_id)"
@@ -46,13 +65,31 @@ async def get_dashboard_stats(user=Depends(get_current_user)):
     checklist_completed = sum(item.get("is_completed") is True for item in checklist_items.data)
 
     documents = supabase.table("documents").select(
-        "id", count="exact"
+        "document_category", count="exact"
     ).eq("user_id", user.id).execute()
+    try:
+        checklists = supabase.table("checklists").select(
+            "scheme_id,status,checklist_items(id,is_completed),schemes(name)"
+        ).eq("user_id", user.id).execute()
+        checklist_data = checklists.data or []
+        for checklist in checklist_data:
+            checklist["scheme_name"] = (checklist.get("schemes") or {}).get("name")
+        ai_insights = get_recommendation_provider().build_dashboard_insights(
+            ai_profile,
+            ai_results,
+            ai_schemes,
+            checklist_data,
+            documents.data or [],
+        )
+    except Exception:
+        logger.exception("Could not build dashboard AI insights")
+        ai_insights = []
 
     return {
         "profile_completion": round(completed_profile_fields / len(completion_fields) * 100),
         "eligible_schemes": eligible_schemes_count,
         "uploaded_documents": documents.count or 0,
+        "ai_insights": ai_insights,
         "checklist_progress": {
             "completed": checklist_completed,
             "total": checklist_total,
