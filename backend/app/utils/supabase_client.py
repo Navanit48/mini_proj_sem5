@@ -19,3 +19,8 @@ def get_supabase_anon_client() -> Client:
     """Create a Supabase client with anon key (for auth operations)."""
     settings = get_settings()
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
+
+
+def safe_data(response):
+    """Return response.data safely when postgrest maybe_single() returns None."""
+    return response.data if response is not None else None

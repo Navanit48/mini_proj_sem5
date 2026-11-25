@@ -128,7 +128,7 @@ const ChecklistCard = ({ checklist, onToggleItem, pendingItems }) => {
                         'shrink-0 flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md',
                         item.is_completed
                           ? 'text-muted-foreground/60'
-                          : new Date(item.due_date) < new Date()
+                          : String(item.due_date).slice(0, 10) < new Date().toLocaleDateString('en-CA')
                             ? 'text-rose-400 bg-rose-500/8'
                             : 'text-muted-foreground bg-secondary/40'
                       )}>

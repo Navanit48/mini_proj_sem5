@@ -8,7 +8,18 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.config import get_settings
-from app.routers import auth, schemes, eligibility, documents, checklist, analytics, notifications, webhooks, assistant
+from app.routers import (
+    analytics,
+    applications,
+    assistant,
+    auth,
+    checklist,
+    documents,
+    eligibility,
+    notifications,
+    schemes,
+    webhooks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +49,10 @@ def create_app() -> FastAPI:
     )
 
     # ─── CORS Middleware ───
+    cors_origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS.split(","),
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -57,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(notifications.router, prefix=f"{api_prefix}/notifications", tags=["Notifications"])
     app.include_router(webhooks.router, prefix=f"{api_prefix}/webhooks", tags=["Webhooks"])
     app.include_router(assistant.router, prefix=f"{api_prefix}/assistant", tags=["Assistant"])
+    app.include_router(applications.router, prefix=f"{api_prefix}/applications", tags=["Applications"])
 
     # ─── Health Check ───
     @app.get("/health", tags=["Health"])

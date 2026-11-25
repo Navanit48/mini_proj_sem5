@@ -93,6 +93,37 @@ class DeterministicAssistantProviderTests(unittest.TestCase):
         self.assertIn("couldn't find a matching scheme", result["content"])
         self.assertEqual(result["scheme_cards"], [])
 
+    def test_acronym_and_partial_scheme_names_match(self):
+        context = {
+            **self.context,
+            "schemes": [
+                {
+                    "id": "pmay-id",
+                    "name": "Pradhan Mantri Awas Yojana (PMAY)",
+                    "description": "Housing for all.",
+                    "ministry": "Ministry of Housing and Urban Affairs",
+                },
+                {
+                    "id": "pmjay-id",
+                    "name": "Ayushman Bharat - PMJAY",
+                    "description": "Health insurance scheme.",
+                    "ministry": "Ministry of Health and Family Welfare",
+                },
+                {
+                    "id": "pmkisan-id",
+                    "name": "PM Kisan Samman Nidhi",
+                    "description": "Farmer income support.",
+                    "ministry": "Ministry of Agriculture",
+                },
+            ],
+        }
+        pmay = self.provider.generate_response("Explain PMAY", context)
+        self.assertIn("Pradhan Mantri Awas Yojana (PMAY)", pmay["content"])
+        pmjay = self.provider.generate_response("Explain PMJAY", context)
+        self.assertIn("Ayushman Bharat - PMJAY", pmjay["content"])
+        pmkisan = self.provider.generate_response("Tell me about PM Kisan", context)
+        self.assertIn("PM Kisan Samman Nidhi", pmkisan["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

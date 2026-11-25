@@ -32,13 +32,13 @@ class SchemeUpdate(BaseModel):
 class SchemeResponse(BaseModel):
     id: str
     name: str
-    slug: str
+    slug: Optional[str] = None
     description: str
     ministry: str
     category: str
-    target_states: List[str]
-    benefits_summary: str
-    eligibility_summary: str
+    target_states: List[str] = []
+    benefits_summary: Optional[str] = None
+    eligibility_summary: Optional[str] = None
     application_url: Optional[str] = None
     deadline: Optional[date] = None
     is_active: bool

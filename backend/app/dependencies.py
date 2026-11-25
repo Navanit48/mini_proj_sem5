@@ -5,7 +5,7 @@ Provides: database sessions, authenticated user extraction, admin guards.
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.utils.supabase_client import get_supabase_anon_client, get_supabase_client
+from app.utils.supabase_client import get_supabase_anon_client, get_supabase_client, safe_data
 
 security = HTTPBearer()
 
@@ -42,10 +42,11 @@ async def require_admin(user=Depends(get_current_user)):
     Ensure the current user has admin role.
     Raises 403 if not admin.
     """
-    profile = get_supabase_client().table("user_profiles").select("role").eq(
+    profile_response = get_supabase_client().table("user_profiles").select("role").eq(
         "user_id", user.id
     ).maybe_single().execute()
-    if not profile.data or profile.data.get("role") != "admin":
+    profile_data = safe_data(profile_response)
+    if not profile_data or profile_data.get("role") != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",

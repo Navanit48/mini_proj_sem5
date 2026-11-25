@@ -16,7 +16,7 @@ from app.services.eligibility_engine import (
     evaluate_eligibility,
 )
 from app.services.ai_recommendation import get_recommendation_provider
-from app.utils.supabase_client import get_supabase_client
+from app.utils.supabase_client import get_supabase_client, safe_data
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ async def check_eligibility(data: EligibilityCheckRequest, user=Depends(get_curr
     profile_response = supabase.table("user_profiles").select(
         "full_name,date_of_birth,gender,state,district,occupation,category,annual_income,land_holding_acres,is_bpl,is_disabled"
     ).eq("user_id", user.id).maybe_single().execute()
-    profile = profile_response.data or {}
+    profile = safe_data(profile_response) or {}
 
     submitted_profile = data.model_dump(exclude_none=True)
     for field, value in submitted_profile.items():
@@ -185,12 +185,13 @@ async def get_eligibility_history(user=Depends(get_current_user)):
 async def get_eligibility_detail(check_id: str, user=Depends(get_current_user)):
     """Return one saved check, scoped to the authenticated user."""
     supabase = get_supabase_client()
-    check = supabase.table("eligibility_checks").select(
+    check_response = supabase.table("eligibility_checks").select(
         "*, eligibility_results(*, schemes(name,description,benefits_summary,deadline,application_url,category))"
     ).eq("id", check_id).eq("user_id", user.id).maybe_single().execute()
+    check = safe_data(check_response)
 
-    if not check.data:
+    if not check:
         raise HTTPException(status_code=404, detail="Check not found")
 
     checklists, documents = _load_recommendation_context(supabase, user.id)
-    return _format_saved_check(check.data, checklists, documents)
+    return _format_saved_check(check, checklists, documents)

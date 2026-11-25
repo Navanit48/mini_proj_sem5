@@ -21,7 +21,7 @@ const LoginPage = () => {
       await login(email, password);
       navigate('/dashboard');
     } catch (err) {
-      setError(err.message || 'Failed to login');
+      setError(err.response?.data?.detail || err.message || 'Failed to login');
     } finally {
       setIsSubmitting(false);
     }
@@ -119,9 +119,6 @@ const LoginPage = () => {
                   Remember me
                 </label>
               </div>
-              <a href="#" className="text-sm font-medium text-primary hover:text-primary/80 transition-colors">
-                Forgot password?
-              </a>
             </div>
 
             <button

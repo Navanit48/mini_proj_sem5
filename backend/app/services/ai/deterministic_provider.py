@@ -185,6 +185,38 @@ class DeterministicAssistantProvider:
 
     @staticmethod
     def _find_scheme(question: str, schemes: list[dict[str, Any]]) -> dict[str, Any] | None:
-        normalized = re.sub(r"[^a-z0-9 ]", " ", question.casefold())
-        matches = [scheme for scheme in schemes if scheme.get("name") and re.sub(r"[^a-z0-9 ]", " ", scheme["name"].casefold()) in normalized]
-        return max(matches, key=lambda item: len(item.get("name", "")), default=None)
+        normalized = " ".join(re.sub(r"[^a-z0-9 ]", " ", question.casefold()).split())
+        exact_matches = []
+        for scheme in schemes:
+            name = scheme.get("name") or ""
+            norm_name = " ".join(re.sub(r"[^a-z0-9 ]", " ", name.casefold()).split())
+            if norm_name and norm_name in normalized:
+                exact_matches.append(scheme)
+        if exact_matches:
+            return max(exact_matches, key=lambda item: len(item.get("name", "")))
+
+        # Match parenthesized acronyms (e.g. "(PMAY)", "(NFSA)") or hyphenated abbreviations ("- PMJAY")
+        question_tokens = set(normalized.split())
+        for scheme in schemes:
+            name = scheme.get("name") or ""
+            for acronym in re.findall(r"\(([A-Za-z0-9]{3,})\)|-\s*([A-Za-z0-9]{3,})\b", name):
+                token = (acronym[0] or acronym[1]).casefold()
+                if token in question_tokens:
+                    return scheme
+
+        # Match distinctive scheme phrase after stripping question filler words
+        stop_words = {
+            "explain", "about", "what", "is", "tell", "me", "details", "detail",
+            "why", "not", "eligible", "for", "am", "i", "failed", "miss",
+            "the", "a", "an", "my", "on", "in", "of", "scheme", "yojana",
+        }
+        remaining = " ".join(token for token in normalized.split() if token not in stop_words)
+        if len(remaining) >= 4:
+            partial_matches = []
+            for scheme in schemes:
+                norm_name = " ".join(re.sub(r"[^a-z0-9 ]", " ", (scheme.get("name") or "").casefold()).split())
+                if remaining in norm_name:
+                    partial_matches.append(scheme)
+            if len(partial_matches) == 1:
+                return partial_matches[0]
+        return None

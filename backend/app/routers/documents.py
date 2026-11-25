@@ -3,20 +3,27 @@ AidFlow AI - Documents Router
 File upload and document management.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from app.schemas.document import DocumentResponse, DocumentDetailResponse, DocumentListResponse
-from app.utils.supabase_client import get_supabase_client
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from app.schemas.document import (
+    DocumentDetailResponse,
+    DocumentListResponse,
+    DocumentResponse,
+    OCRResultResponse,
+)
+from app.utils.supabase_client import get_supabase_client, safe_data
 from app.utils.storage import upload_file, get_signed_url, delete_file
 from app.dependencies import get_current_user
 from app.config import get_settings
+from app.services.ocr_service import process_document_ocr
 
 router = APIRouter()
 
 
 @router.post("/upload", response_model=DocumentResponse, status_code=201)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    document_category: str = "general",
+    document_category: str = Form(default="general"),
     user=Depends(get_current_user),
 ):
     """Upload a PDF or JPEG document for the current user."""
@@ -52,7 +59,7 @@ async def upload_document(
         "file_type": file.content_type,
         "storage_path": storage_path,
         "document_category": document_category,
-        "status": "uploaded",
+        "status": "processing",
         "file_size_bytes": len(file_bytes),
     }
     try:
@@ -65,6 +72,15 @@ async def upload_document(
         raise
 
     doc["signed_url"] = get_signed_url(storage_path)
+    doc["verification"] = None
+    background_tasks.add_task(
+        process_document_ocr,
+        doc["id"],
+        user.id,
+        storage_path,
+        file.content_type,
+        document_category,
+    )
     return doc
 
 
@@ -76,10 +92,24 @@ async def list_documents(user=Depends(get_current_user)):
         "user_id", user.id
     ).order("uploaded_at", desc=True).execute()
 
-    # Add signed URLs
+    # Batch-load OCR results so listing documents does not create N+1 database queries.
     docs = []
-    for doc in response.data:
+    raw_documents = response.data or []
+    verification_by_document = {}
+    document_ids = [doc["id"] for doc in raw_documents]
+    if document_ids:
+        verification_response = supabase.table("ocr_results").select(
+            "id,document_id,extracted_fields,confidence_score,processed_at,"
+            "detected_document_type,document_type_confidence,verification_status,"
+            "validation_summary,mismatches,warnings"
+        ).in_("document_id", document_ids).execute()
+        verification_by_document = {
+            row["document_id"]: row for row in (verification_response.data or [])
+        }
+
+    for doc in raw_documents:
         doc["signed_url"] = get_signed_url(doc["storage_path"])
+        doc["verification"] = verification_by_document.get(doc["id"])
         docs.append(doc)
 
     return DocumentListResponse(documents=docs, total=len(docs))
@@ -99,7 +129,44 @@ async def get_document(document_id: str, user=Depends(get_current_user)):
 
     doc = response.data[0]
     doc["signed_url"] = get_signed_url(doc["storage_path"])
-    return DocumentDetailResponse(document=doc)
+    verification = supabase.table("ocr_results").select(
+        "id,document_id,extracted_fields,confidence_score,processed_at,"
+        "detected_document_type,document_type_confidence,verification_status,"
+        "validation_summary,mismatches,warnings"
+    ).eq("document_id", document_id).maybe_single().execute()
+    return DocumentDetailResponse(document=doc, verification=safe_data(verification))
+
+
+@router.post("/{document_id}/verify", status_code=202)
+async def verify_document_again(
+    document_id: str,
+    background_tasks: BackgroundTasks,
+    user=Depends(get_current_user),
+):
+    """Queue a fresh local preliminary check for an owned document."""
+    supabase = get_supabase_client()
+    response = supabase.table("documents").select(
+        "id,user_id,storage_path,file_type,document_category"
+    ).eq("id", document_id).eq("user_id", user.id).maybe_single().execute()
+    doc = safe_data(response)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    supabase.table("documents").update({"status": "processing"}).eq(
+        "id", document_id
+    ).eq("user_id", user.id).execute()
+    background_tasks.add_task(
+        process_document_ocr,
+        document_id,
+        user.id,
+        doc["storage_path"],
+        doc["file_type"],
+        doc.get("document_category") or "general",
+    )
+    return {
+        "document_id": document_id,
+        "status": "processing",
+        "label": "AI Preliminary Verification",
+    }
 
 
 @router.delete("/{document_id}")

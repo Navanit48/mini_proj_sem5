@@ -6,9 +6,10 @@ Provides dashboard data and aggregated statistics.
 import logging
 
 from fastapi import APIRouter, Depends
-from app.utils.supabase_client import get_supabase_client
+from app.utils.supabase_client import get_supabase_client, safe_data
 from app.dependencies import get_current_user, require_admin
 from app.services.ai_recommendation import get_recommendation_provider
+from app.services.application_service import list_applications
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -22,10 +23,10 @@ async def get_dashboard_stats(user=Depends(get_current_user)):
     profile_response = supabase.table("user_profiles").select("*").eq(
         "user_id", user.id
     ).maybe_single().execute()
-    profile = profile_response.data or {}
+    profile = safe_data(profile_response) or {}
     completion_fields = (
         "full_name",
-        "phone",
+        "gender",
         "state",
         "district",
         "occupation",
@@ -61,12 +62,38 @@ async def get_dashboard_stats(user=Depends(get_current_user)):
     checklist_items = supabase.table("checklist_items").select(
         "id, is_completed, checklists!inner(user_id)"
     ).eq("checklists.user_id", user.id).execute()
-    checklist_total = len(checklist_items.data)
-    checklist_completed = sum(item.get("is_completed") is True for item in checklist_items.data)
+    checklist_rows = checklist_items.data or []
+    checklist_total = len(checklist_rows)
+    checklist_completed = sum(item.get("is_completed") is True for item in checklist_rows)
 
     documents = supabase.table("documents").select(
-        "document_category", count="exact"
+        "id,document_category,status", count="exact"
     ).eq("user_id", user.id).execute()
+    document_rows = documents.data or []
+    verification_rows = []
+    document_ids = [document.get("id") for document in document_rows if document.get("id")]
+    if document_ids:
+        verification_response = supabase.table("ocr_results").select(
+            "document_id,verification_status,confidence_score"
+        ).in_("document_id", document_ids).execute()
+        verification_rows = verification_response.data or []
+    verification_by_id = {row["document_id"]: row for row in verification_rows}
+    verification_summary = {
+        "preliminary_match": sum(row.get("verification_status") == "preliminary_match" for row in verification_rows),
+        "needs_review": sum(row.get("verification_status") == "needs_review" for row in verification_rows),
+        "unreadable": sum(row.get("verification_status") == "unreadable" for row in verification_rows),
+        "processing": sum(
+            document.get("status") in {"uploaded", "processing"}
+            or document.get("id") not in verification_by_id
+            for document in document_rows
+        ),
+    }
+    pending_documents = sum(
+        document.get("status") in {"uploaded", "processing", "failed"}
+        or (document.get("status") == "completed" and document.get("id") not in verification_by_id)
+        or verification_by_id.get(document.get("id"), {}).get("verification_status") in {"needs_review", "unreadable"}
+        for document in document_rows
+    )
     try:
         checklists = supabase.table("checklists").select(
             "scheme_id,status,checklist_items(id,is_completed),schemes(name)"
@@ -79,17 +106,27 @@ async def get_dashboard_stats(user=Depends(get_current_user)):
             ai_results,
             ai_schemes,
             checklist_data,
-            documents.data or [],
+            document_rows,
         )
     except Exception:
         logger.exception("Could not build dashboard AI insights")
         ai_insights = []
+
+    try:
+        recent_applications = list_applications(supabase, user.id)[:3]
+    except Exception:
+        logger.exception("Could not load application data for dashboard")
+        recent_applications = []
 
     return {
         "profile_completion": round(completed_profile_fields / len(completion_fields) * 100),
         "eligible_schemes": eligible_schemes_count,
         "uploaded_documents": documents.count or 0,
         "ai_insights": ai_insights,
+        "recent_applications": recent_applications,
+        "verification_summary": verification_summary,
+        "pending_documents": pending_documents,
+        "application_progress": recent_applications[0]["progress"] if recent_applications else 0,
         "checklist_progress": {
             "completed": checklist_completed,
             "total": checklist_total,
@@ -118,8 +155,8 @@ async def get_admin_analytics(admin=Depends(require_admin)):
     ).gte("match_percentage", 50).execute()
 
     scheme_counts = {}
-    for p in popular.data:
-        name = p.get("schemes", {}).get("name", "Unknown")
+    for p in popular.data or []:
+        name = (p.get("schemes") or {}).get("name", "Unknown")
         scheme_counts[name] = scheme_counts.get(name, 0) + 1
 
     top_schemes = sorted(

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Link } from 'react-router-dom';
 import {
   Search, ChevronDown, ExternalLink, Calendar,
   Building2, MapPin, Loader2, ShieldCheck, X
@@ -111,22 +112,19 @@ const SchemeCard = ({ scheme, index }) => {
             <ChevronDown className={cn('w-3.5 h-3.5 transition-transform duration-200', expanded && 'rotate-180')} />
           </button>
 
-          <a
-              href={scheme.application_url || undefined}
-              aria-disabled={!scheme.application_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(event) => !scheme.application_url && event.preventDefault()}
-              className={cn(
-                'inline-flex items-center gap-1.5 text-xs font-medium transition-colors px-3 py-1.5 rounded-lg',
-                scheme.application_url
-                  ? 'text-primary hover:text-primary/80 bg-primary/8 hover:bg-primary/12'
-                  : 'text-muted-foreground bg-secondary/50 cursor-not-allowed'
-              )}
+          <div className="flex items-center gap-2">
+            <Link
+              to={`/applications/new?scheme_id=${encodeURIComponent(scheme.id)}`}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
             >
-              Apply
-              {scheme.application_url && <ExternalLink className="w-3 h-3" />}
-          </a>
+              Apply with AidFlow
+            </Link>
+            {scheme.application_url && (
+              <a href={scheme.application_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">
+                Official portal <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
+          </div>
         </div>
       </div>
     </motion.div>

@@ -16,8 +16,11 @@ def evaluate_eligibility(user_profile: Dict[str, Any], scheme_rules: List[Dict[s
     results = []
     
     for rule_record in scheme_rules:
+        scheme = rule_record.get("schemes") or {}
+        if scheme.get("is_active") is False:
+            continue
         scheme_id = rule_record.get("scheme_id")
-        scheme_name = rule_record.get("schemes", {}).get("name", "Unknown")
+        scheme_name = scheme.get("name", "Unknown")
         rule_def = rule_record.get("rule_definition", {})
         
         # A scheme without configured rules cannot be presented as eligible.
@@ -69,7 +72,7 @@ def _eval_node(node: Dict[str, Any], profile: Dict[str, Any], matched: List[str]
         is_match = False
         desc = f"{field} {op} {target}"
         
-        if actual is None:
+        if actual is None or (isinstance(actual, str) and not actual.strip()):
             is_match = False
             desc += f" (Missing in profile)"
         else:

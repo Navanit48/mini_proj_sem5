@@ -3,10 +3,12 @@ AidFlow AI - Webhooks Router
 Endpoints for n8n to communicate with the backend.
 """
 
+import hmac
+
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from pydantic import BaseModel
 from app.config import get_settings
-from app.utils.supabase_client import get_supabase_client
+from app.utils.supabase_client import get_supabase_client, safe_data
 
 router = APIRouter()
 
@@ -14,7 +16,11 @@ router = APIRouter()
 def verify_n8n_webhook(x_n8n_secret: str = Header(None)):
     """Verify the webhook secret from n8n."""
     settings = get_settings()
-    if not x_n8n_secret or x_n8n_secret != settings.N8N_WEBHOOK_SECRET:
+    if (
+        not settings.N8N_WEBHOOK_SECRET
+        or not x_n8n_secret
+        or not hmac.compare_digest(x_n8n_secret, settings.N8N_WEBHOOK_SECRET)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid webhook secret",
@@ -61,8 +67,9 @@ async def n8n_status_update(
     supabase = get_supabase_client()
 
     # Get scheme name
-    scheme = supabase.table("schemes").select("name").eq("id", payload.scheme_id).single().execute()
-    scheme_name = scheme.data["name"] if scheme.data else "a scheme"
+    scheme_response = supabase.table("schemes").select("name").eq("id", payload.scheme_id).maybe_single().execute()
+    scheme_data = safe_data(scheme_response)
+    scheme_name = scheme_data["name"] if scheme_data else "a scheme"
 
     supabase.table("notifications").insert({
         "user_id": payload.user_id,

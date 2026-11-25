@@ -5,14 +5,25 @@ Handles registration, login, logout, and token refresh via Supabase Auth.
 
 import logging
 
+import httpx
 from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.security import HTTPAuthorizationCredentials
-from app.schemas.user import UserRegister, UserLogin, AuthResponse
-from app.utils.supabase_client import get_supabase_client, get_supabase_anon_client
+from supabase_auth.errors import AuthError, AuthRetryableError
+from app.schemas.user import UserRegister, UserLogin, AuthResponse, UserProfileUpdate, UserProfileResponse
+from app.utils.supabase_client import get_supabase_client, get_supabase_anon_client, safe_data
 from app.dependencies import get_current_user, security
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_SUPABASE_UNREACHABLE_DETAIL = (
+    "Cannot reach Supabase Auth service. Verify SUPABASE_URL in backend/.env and your internet connection."
+)
+
+
+def _is_connection_error(exc: Exception) -> bool:
+    """Return True when exc represents a network, DNS, or transport failure."""
+    return isinstance(exc, (httpx.HTTPError, OSError, AuthRetryableError))
 
 
 @router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
@@ -49,6 +60,8 @@ async def register(data: UserRegister):
         raise
     except Exception as e:
         logger.exception("Registration failed during %s", stage)
+        if _is_connection_error(e):
+            raise HTTPException(status_code=503, detail=_SUPABASE_UNREACHABLE_DETAIL) from e
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
@@ -77,7 +90,12 @@ async def login(data: UserLogin):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=401, detail="Invalid credentials") from e
+        logger.exception("Login failed")
+        if _is_connection_error(e):
+            raise HTTPException(status_code=503, detail=_SUPABASE_UNREACHABLE_DETAIL) from e
+        if isinstance(e, AuthError):
+            raise HTTPException(status_code=401, detail="Invalid credentials") from e
+        raise HTTPException(status_code=500, detail="Login failed due to a server error") from e
 
 
 @router.post("/logout")
@@ -115,20 +133,49 @@ async def get_me(user=Depends(get_current_user)):
     """Get current authenticated user's profile."""
     try:
         supabase = get_supabase_client()
-        profile = supabase.table("user_profiles").select("*").eq(
+        profile_response = supabase.table("user_profiles").select("*").eq(
             "user_id", user.id
         ).maybe_single().execute()
+        profile_data = safe_data(profile_response)
 
-        if not profile.data:
+        if not profile_data:
+            metadata = getattr(user, "user_metadata", None) or {}
+            created = supabase.table("user_profiles").upsert({
+                "user_id": user.id,
+                "full_name": metadata.get("full_name") or "",
+            }, on_conflict="user_id").execute()
+            profile_data = created.data[0] if created.data else None
+
+        if not profile_data:
             raise HTTPException(status_code=404, detail="User profile not found")
 
         return {
             "user_id": user.id,
             "email": user.email,
-            "role": profile.data["role"],
-            "profile": profile.data,
+            "role": profile_data.get("role", "citizen"),
+            "profile": profile_data,
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail="Could not load user profile") from e
+
+
+@router.put("/profile", response_model=UserProfileResponse)
+async def update_profile(data: UserProfileUpdate, user=Depends(get_current_user)):
+    """Update the authenticated user's saved profile."""
+    try:
+        supabase = get_supabase_client()
+        updates = data.model_dump(mode="json", exclude_unset=True)
+        payload = {"user_id": user.id, **updates}
+        response = supabase.table("user_profiles").upsert(
+            payload, on_conflict="user_id"
+        ).execute()
+        if not response.data:
+            raise HTTPException(status_code=500, detail="Could not update user profile")
+        return response.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Profile update failed for user %s", user.id)
+        raise HTTPException(status_code=400, detail="Could not update user profile") from e

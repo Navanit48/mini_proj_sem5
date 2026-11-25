@@ -78,6 +78,24 @@ export const router = createBrowserRouter([
             }),
           },
           {
+            path: '/applications/new',
+            lazy: async () => ({
+              Component: (await import('../pages/ApplicationReviewPage')).default,
+            }),
+          },
+          {
+            path: '/applications',
+            lazy: async () => ({
+              Component: (await import('../pages/ApplicationsPage')).default,
+            }),
+          },
+          {
+            path: '/applications/:applicationId',
+            lazy: async () => ({
+              Component: (await import('../pages/ApplicationsPage')).default,
+            }),
+          },
+          {
             path: '/checklists',
             lazy: async () => ({
               Component: (await import('../pages/ChecklistsPage')).default,

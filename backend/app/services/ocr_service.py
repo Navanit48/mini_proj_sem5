@@ -1,101 +1,151 @@
-"""
-AidFlow AI - OCR Service
-Wraps PaddleOCR for text extraction and integrates with AI Service for structuring.
-"""
+"""Background OCR and preliminary document verification processing."""
 
-from app.utils.supabase_client import get_supabase_client
-from app.utils.storage import download_file
-from app.services.ai_service import extract_fields_from_ocr
-from app.config import get_settings
+from __future__ import annotations
+
 import logging
-import tempfile
 import os
-import uuid
+import tempfile
+from datetime import datetime, timezone
+from typing import Any
 
-# Lazy load PaddleOCR to avoid massive memory usage on startup
-_ocr_engine = None
+from app.config import get_settings
+from app.services.document_verification import verify_document
+from app.utils.storage import download_file
+from app.utils.supabase_client import get_supabase_client, safe_data
+
 logger = logging.getLogger(__name__)
+_ocr_engine = None
+
 
 def get_ocr_engine():
+    """Load PaddleOCR only when a document is actually processed."""
     global _ocr_engine
     if _ocr_engine is None:
         from paddleocr import PaddleOCR
+
         settings = get_settings()
         _ocr_engine = PaddleOCR(
-            use_angle_cls=True, 
-            lang=settings.PADDLE_LANG, 
+            use_angle_cls=True,
+            lang=settings.PADDLE_LANG,
             use_gpu=settings.PADDLE_USE_GPU,
-            show_log=False
+            show_log=False,
         )
     return _ocr_engine
 
 
-async def process_document_ocr(document_id: str, storage_path: str, file_type: str):
-    """
-    Background task: Download file, run OCR, extract fields via AI, save results.
-    """
-    supabase = get_supabase_client()
-    
+def _read_ocr_output(result: Any) -> tuple[str, float]:
+    lines: list[str] = []
+    confidences: list[float] = []
+    for page in result or []:
+        if not isinstance(page, (list, tuple)):
+            continue
+        for line in page:
+            try:
+                text, confidence = line[1][0], float(line[1][1])
+            except (IndexError, TypeError, ValueError):
+                continue
+            if text:
+                lines.append(str(text))
+                confidences.append(confidence)
+    return "\n".join(lines), sum(confidences) / len(confidences) if confidences else 0.0
+
+
+def _extract_text_from_file(file_bytes: bytes, file_type: str) -> tuple[str, float]:
+    """Run local PaddleOCR on an image or PDF (converting PDF pages to images first)."""
+    engine = get_ocr_engine()
+    temp_paths: list[str] = []
     try:
-        # Update status
-        supabase.table("documents").update({"status": "processing"}).eq("id", document_id).execute()
-        
-        # Download file bytes
+        if file_type == "application/pdf":
+            from pdf2image import convert_from_bytes
+
+            images = convert_from_bytes(file_bytes, dpi=200)
+            page_texts: list[str] = []
+            page_confidences: list[float] = []
+            for image in images:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as page_file:
+                    image.save(page_file, format="JPEG")
+                    temp_paths.append(page_file.name)
+                page_text, page_conf = _read_ocr_output(engine.ocr(temp_paths[-1], cls=True))
+                if page_text:
+                    page_texts.append(page_text)
+                    page_confidences.append(page_conf)
+            avg_conf = sum(page_confidences) / len(page_confidences) if page_confidences else 0.0
+            return "\n".join(page_texts), avg_conf
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+            temp_file.write(file_bytes)
+            temp_paths.append(temp_file.name)
+        return _read_ocr_output(engine.ocr(temp_paths[-1], cls=True))
+    finally:
+        for path in temp_paths:
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def process_document_ocr(
+    document_id: str,
+    user_id: str,
+    storage_path: str,
+    file_type: str,
+    declared_type: str = "general",
+) -> None:
+    """Run local OCR, compare explicit fields with the user's saved profile, and persist a preliminary result."""
+    supabase = get_supabase_client()
+    try:
+        supabase.table("documents").update({"status": "processing"}).eq(
+            "id", document_id
+        ).eq("user_id", user_id).execute()
+
         file_bytes = download_file(storage_path)
-        
-        # PaddleOCR requires a file path on disk, not bytes directly for some formats
-        # We'll use a temporary file
-        ext = ".pdf" if "pdf" in file_type else ".jpg"
-        temp_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}{ext}")
-        
-        with open(temp_path, "wb") as f:
-            f.write(file_bytes)
-            
-        # Get engine and run OCR
-        ocr = get_ocr_engine()
-        result = ocr.ocr(temp_path, cls=True)
-        
-        # Parse PaddleOCR output
-        raw_text_parts = []
-        confidence_sum = 0
-        word_count = 0
-        
-        # result is a list of lists (pages -> lines)
-        if result and result[0]:
-            for line in result[0]:
-                if len(line) >= 2 and len(line[1]) >= 2:
-                    text = line[1][0]
-                    confidence = line[1][1]
-                    raw_text_parts.append(text)
-                    confidence_sum += confidence
-                    word_count += 1
-                    
-        raw_text = "\n".join(raw_text_parts)
-        avg_confidence = (confidence_sum / word_count) if word_count > 0 else 0
-        
-        # Clean up temp file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-            
-        # Get document category for AI hint
-        doc = supabase.table("documents").select("document_category").eq("id", document_id).single().execute()
-        category = doc.data.get("document_category", "unknown") if doc.data else "unknown"
-        
-        # Use AI to extract structured fields
-        extracted_fields = extract_fields_from_ocr(raw_text, category)
-        
-        # Save results
-        supabase.table("ocr_results").insert({
+        ocr_text, ocr_confidence = _extract_text_from_file(file_bytes, file_type)
+        profile_response = supabase.table("user_profiles").select(
+            "full_name,date_of_birth,gender,state,district,category,annual_income,land_holding_acres"
+        ).eq("user_id", user_id).maybe_single().execute()
+        profile = safe_data(profile_response) or {}
+        verification = verify_document(ocr_text, declared_type, profile, ocr_confidence)
+
+        supabase.table("ocr_results").upsert({
             "document_id": document_id,
-            "raw_text": raw_text,
-            "extracted_fields": extracted_fields,
-            "confidence_score": float(avg_confidence)
-        }).execute()
-        
-        # Update document status
-        supabase.table("documents").update({"status": "completed"}).eq("id", document_id).execute()
-        
+            # Raw OCR can contain identity and financial data. Persist only the fields needed for review.
+            "raw_text": None,
+            "extracted_fields": verification["extracted_fields"],
+            "confidence_score": verification["confidence_score"],
+            "detected_document_type": verification["detected_document_type"],
+            "document_type_confidence": verification["document_type_confidence"],
+            "verification_status": verification["verification_status"],
+            "validation_summary": verification["validation_summary"],
+            "mismatches": verification["mismatches"],
+            "warnings": verification["warnings"],
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="document_id").execute()
+        supabase.table("documents").update({"status": "completed"}).eq(
+            "id", document_id
+        ).eq("user_id", user_id).execute()
     except Exception:
-        logger.error("OCR processing failed for document %s", document_id)
-        # Update document status to failed
-        supabase.table("documents").update({"status": "failed"}).eq("id", document_id).execute()
+        logger.exception("Preliminary document verification failed for document %s", document_id)
+        try:
+            supabase.table("documents").update({"status": "failed"}).eq(
+                "id", document_id
+            ).eq("user_id", user_id).execute()
+            supabase.table("ocr_results").upsert({
+                "document_id": document_id,
+                "raw_text": None,
+                "extracted_fields": {},
+                "confidence_score": 0,
+                "detected_document_type": declared_type,
+                "document_type_confidence": 0,
+                "verification_status": "unreadable",
+                "validation_summary": "Preliminary verification could not be completed. Review the file or upload a clearer scan.",
+                "mismatches": [],
+                "warnings": ["OCR processing failed; no document details were confirmed."],
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            }, on_conflict="document_id").execute()
+        except Exception:
+            logger.exception("Could not save failure state for document %s", document_id)
+
+    try:
+        from app.services.application_service import refresh_applications_for_document
+
+        refresh_applications_for_document(supabase, user_id, document_id)
+    except Exception:
+        logger.exception("Could not refresh application status after document processing")

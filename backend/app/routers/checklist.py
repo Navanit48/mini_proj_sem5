@@ -8,7 +8,7 @@ from app.schemas.checklist import (
     ChecklistGenerateRequest, ChecklistResponse,
     ChecklistListResponse, ChecklistItemUpdate,
 )
-from app.utils.supabase_client import get_supabase_client
+from app.utils.supabase_client import get_supabase_client, safe_data
 from app.dependencies import get_current_user
 from app.services.checklist_service import generate_checklist_items
 from datetime import date, datetime, timedelta, timezone
@@ -22,8 +22,9 @@ async def generate_checklist(data: ChecklistGenerateRequest, user=Depends(get_cu
     supabase = get_supabase_client()
 
     # Get scheme details
-    scheme = supabase.table("schemes").select("*").eq("id", data.scheme_id).maybe_single().execute()
-    if not scheme.data:
+    scheme_response = supabase.table("schemes").select("*").eq("id", data.scheme_id).maybe_single().execute()
+    scheme_data = safe_data(scheme_response)
+    if not scheme_data:
         raise HTTPException(status_code=404, detail="Scheme not found")
 
     # Check if checklist already exists
@@ -35,7 +36,7 @@ async def generate_checklist(data: ChecklistGenerateRequest, user=Depends(get_cu
         raise HTTPException(status_code=409, detail="Checklist already exists for this scheme")
 
     # Generate checklist items using AI
-    items = await generate_checklist_items(scheme.data)
+    items = await generate_checklist_items(scheme_data)
 
     # Create checklist
     checklist = supabase.table("checklists").insert({
@@ -113,7 +114,7 @@ async def update_checklist_item(
         "id", checklist_id
     ).eq("user_id", user.id).maybe_single().execute()
 
-    if not checklist.data:
+    if not safe_data(checklist):
         raise HTTPException(status_code=404, detail="Checklist not found")
 
     update_data = {"is_completed": data.is_completed}
@@ -146,13 +147,14 @@ async def _get_checklist(checklist_id: str, user_id: str) -> dict:
     """Internal helper to fetch a full checklist."""
     supabase = get_supabase_client()
 
-    cl = supabase.table("checklists").select(
+    cl_response = supabase.table("checklists").select(
         "*, checklist_items(*), schemes(name)"
     ).eq("id", checklist_id).eq("user_id", user_id).maybe_single().execute()
+    cl_data = safe_data(cl_response)
 
-    if not cl.data:
+    if not cl_data:
         raise HTTPException(status_code=404, detail="Checklist not found")
 
-    cl.data["scheme_name"] = (cl.data.get("schemes") or {}).get("name")
-    cl.data["items"] = cl.data.pop("checklist_items", [])
-    return cl.data
+    cl_data["scheme_name"] = (cl_data.get("schemes") or {}).get("name")
+    cl_data["items"] = cl_data.pop("checklist_items", [])
+    return cl_data

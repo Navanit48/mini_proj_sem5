@@ -33,7 +33,7 @@ const priorityStyles = {
   low: 'border-secondary bg-secondary/60 text-muted-foreground',
 };
 
-const AIRecommendationPanel = ({ recommendation, onCompleteProfile }) => {
+const AIRecommendationPanel = ({ recommendation, schemeId, onCompleteProfile }) => {
   if (!recommendation) return null;
 
   const style = statusStyles[recommendation.status] || statusStyles['Not Eligible'];
@@ -152,6 +152,13 @@ const AIRecommendationPanel = ({ recommendation, onCompleteProfile }) => {
             >
               {action.label}
             </button>
+          ) : action.kind === 'apply_now' && schemeId ? (
+            <Link
+              to={`/applications/new?scheme_id=${encodeURIComponent(schemeId)}`}
+              className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary/90"
+            >
+              Apply with AidFlow
+            </Link>
           ) : action.external ? (
             <a
               href={action.href}

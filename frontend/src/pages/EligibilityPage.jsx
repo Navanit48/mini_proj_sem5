@@ -130,6 +130,7 @@ const ResultCard = ({ result, index, onCompleteProfile }) => {
         </AnimatePresence>
         <AIRecommendationPanel
           recommendation={result.ai_recommendation}
+          schemeId={result.scheme_id}
           onCompleteProfile={onCompleteProfile}
         />
       </div>
@@ -138,7 +139,7 @@ const ResultCard = ({ result, index, onCompleteProfile }) => {
 };
 
 const EligibilityPage = () => {
-  const { user } = useAuth();
+  const { user, refreshProfile } = useAuth();
   const [step, setStep] = useState('form'); // form | loading | results
   const [results, setResults] = useState(null);
   const [history, setHistory] = useState([]);
@@ -206,13 +207,23 @@ const EligibilityPage = () => {
     setStep('loading');
 
     try {
+      const parseOptionalNumber = (value) => {
+        if (value === '' || value === null || value === undefined) return null;
+        const parsed = parseFloat(value);
+        return Number.isNaN(parsed) ? null : parsed;
+      };
       const payload = {
         ...profile,
-        annual_income: profile.annual_income ? parseFloat(profile.annual_income) : null,
-        land_holding_acres: profile.land_holding_acres ? parseFloat(profile.land_holding_acres) : null,
+        full_name: profile.full_name?.trim() || null,
+        date_of_birth: profile.date_of_birth || null,
+        district: profile.district?.trim() || null,
+        annual_income: parseOptionalNumber(profile.annual_income),
+        land_holding_acres: parseOptionalNumber(profile.land_holding_acres),
       };
 
+      await api.put('/auth/profile', payload).catch(() => null);
       const response = await api.post('/eligibility/check', payload);
+      refreshProfile?.().catch(() => null);
       setResults(response.data);
       setHistory(current => [response.data, ...current].slice(0, 20));
       setStep('results');

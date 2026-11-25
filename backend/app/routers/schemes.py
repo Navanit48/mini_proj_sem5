@@ -6,7 +6,7 @@ CRUD operations for government welfare schemes.
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Optional
 from app.schemas.scheme import SchemeCreate, SchemeUpdate, SchemeResponse, SchemeListResponse
-from app.utils.supabase_client import get_supabase_client
+from app.utils.supabase_client import get_supabase_client, safe_data
 from app.dependencies import get_current_user, require_admin
 import re
 
@@ -67,23 +67,27 @@ async def search_schemes(
 ):
     """Full-text search across schemes."""
     supabase = get_supabase_client()
+    sanitized = re.sub(r"[,()]", " ", q).strip()
+    if not sanitized:
+        return {"results": [], "count": 0}
     response = supabase.table("schemes").select("*").or_(
-        f"name.ilike.%{q}%,description.ilike.%{q}%,ministry.ilike.%{q}%"
+        f"name.ilike.%{sanitized}%,description.ilike.%{sanitized}%,ministry.ilike.%{sanitized}%"
     ).eq("is_active", True).limit(20).execute()
 
-    return {"results": response.data, "count": len(response.data)}
+    return {"results": response.data or [], "count": len(response.data or [])}
 
 
 @router.get("/{scheme_id}", response_model=SchemeResponse)
 async def get_scheme(scheme_id: str, user=Depends(get_current_user)):
     """Get single scheme by ID."""
     supabase = get_supabase_client()
-    response = supabase.table("schemes").select("*").eq("id", scheme_id).single().execute()
+    response = supabase.table("schemes").select("*").eq("id", scheme_id).maybe_single().execute()
+    scheme = safe_data(response)
 
-    if not response.data:
+    if not scheme:
         raise HTTPException(status_code=404, detail="Scheme not found")
 
-    return response.data
+    return scheme
 
 
 @router.post("", response_model=SchemeResponse, status_code=201)

@@ -125,6 +125,13 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const refreshProfile = async () => {
+    if (DEMO_MODE) return null;
+    const { data: profileData } = await api.get('/auth/me');
+    setUser((current) => (current ? { ...current, profile: profileData.profile, role: profileData.role } : current));
+    return profileData.profile;
+  };
+
   const value = {
     user,
     session,
@@ -132,6 +139,7 @@ export function AuthProvider({ children }) {
     login,
     register,
     logout,
+    refreshProfile,
     isDemoMode: DEMO_MODE,
   };
 

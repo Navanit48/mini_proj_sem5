@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from app.services.ai.deterministic_provider import DeterministicAssistantProvider
 from app.services.ai.provider import AssistantProvider
 from app.services.ai_recommendation import get_recommendation_provider
+from app.utils.supabase_client import safe_data
 
 
 class AssistantService:
@@ -70,7 +71,7 @@ class AssistantService:
         profile_response = self.supabase.table("user_profiles").select("*").eq(
             "user_id", user_id
         ).maybe_single().execute()
-        profile = profile_response.data or {}
+        profile = safe_data(profile_response) or {}
         scheme_response = self.supabase.table("schemes").select("*").eq(
             "is_active", True
         ).execute()
@@ -159,7 +160,7 @@ class AssistantService:
                 item["priority_score"] = score_by_id.get(str(item["scheme_id"]))
 
         # Keep these aggregates consistent with /analytics/dashboard.
-        fields = ("full_name", "phone", "state", "district", "occupation", "annual_income", "category")
+        fields = ("full_name", "gender", "state", "district", "occupation", "annual_income", "category")
         profile_completion = round(
             sum(profile.get(field) is not None and profile.get(field) != "" for field in fields)
             / len(fields) * 100
@@ -189,9 +190,10 @@ class AssistantService:
         response = self.supabase.table("assistant_conversations").select(
             "id,user_id,title,created_at,updated_at"
         ).eq("id", conversation_id).eq("user_id", user_id).maybe_single().execute()
-        if not response.data:
+        data = safe_data(response)
+        if not data:
             raise HTTPException(status_code=404, detail="Conversation not found")
-        return response.data
+        return data
 
     def _insert_message(
         self, user_id: str, conversation_id: str, role: str, content: str, metadata: dict[str, Any]

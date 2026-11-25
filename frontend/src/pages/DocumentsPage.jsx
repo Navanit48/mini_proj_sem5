@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { cn } from '../lib/utils';
+import DocumentVerificationPanel from '../components/documents/DocumentVerificationPanel';
 
 const ACCEPTED_TYPES = ['image/jpeg', 'application/pdf'];
 const MAX_SIZE_MB = 10;
@@ -36,9 +37,12 @@ const getFileIcon = (type) => {
   return File;
 };
 
-const DocumentCard = ({ doc, onDelete }) => {
+const DocumentCard = ({ doc, onDelete, onVerify }) => {
   const FileIcon = getFileIcon(doc.file_type);
   const categoryLabel = DOCUMENT_CATEGORIES.find(c => c.value === doc.document_category)?.label || doc.document_category;
+  const statusLabel = doc.status === 'processing' || doc.status === 'uploaded'
+    ? 'Verification processing'
+    : doc.status === 'failed' ? 'Processing failed' : 'Processed';
 
   return (
     <motion.div
@@ -61,8 +65,11 @@ const DocumentCard = ({ doc, onDelete }) => {
 
           {/* Meta Row */}
           <div className="flex items-center gap-3 mt-2.5">
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400">
-              Uploaded
+            <span className={cn(
+              'inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md',
+              doc.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-300',
+            )}>
+              {statusLabel}
             </span>
             <span className="text-[11px] text-muted-foreground">{formatFileSize(doc.file_size_bytes)}</span>
             <span className="text-[11px] text-muted-foreground">
@@ -72,7 +79,7 @@ const DocumentCard = ({ doc, onDelete }) => {
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+        <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity shrink-0">
           {doc.signed_url && (
             <a href={doc.signed_url} target="_blank" rel="noreferrer" className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors" title="View document">
               <Eye className="w-4 h-4" />
@@ -89,6 +96,16 @@ const DocumentCard = ({ doc, onDelete }) => {
           </button>
         </div>
       </div>
+      <DocumentVerificationPanel document={doc} />
+      {(doc.status === 'failed' || (doc.status === 'completed' && !doc.verification) || doc.verification?.verification_status === 'needs_review' || doc.verification?.verification_status === 'unreadable') && (
+        <button
+          type="button"
+          onClick={() => onVerify(doc.id)}
+          className="mt-3 rounded-lg border border-border/60 bg-secondary/40 px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary"
+        >
+          Re-run preliminary check
+        </button>
+      )}
     </motion.div>
   );
 };
@@ -104,9 +121,20 @@ const DocumentsPage = () => {
   const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
   const fileInputRef = useRef(null);
+  const documentsRef = useRef(documents);
+
+  useEffect(() => {
+    documentsRef.current = documents;
+  }, [documents]);
 
   useEffect(() => {
     fetchDocuments();
+    const interval = setInterval(() => {
+      if (documentsRef.current.some(document => ['uploaded', 'processing'].includes(document.status))) {
+        fetchDocuments();
+      }
+    }, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchDocuments = async () => {
@@ -163,6 +191,19 @@ const DocumentsPage = () => {
       setDocuments(prev => prev.filter(d => d.id !== docId));
     } catch (error) {
       setActionError(error.response?.data?.detail || 'Document could not be deleted. Please try again.');
+    }
+  };
+
+  const handleVerify = async (docId) => {
+    setActionError('');
+    setDocuments(current => current.map(document => (
+      document.id === docId ? { ...document, status: 'processing', verification: null } : document
+    )));
+    try {
+      await api.post(`/documents/${docId}/verify`);
+    } catch (error) {
+      setActionError(error.response?.data?.detail || 'Preliminary verification could not be started. Please try again.');
+      fetchDocuments();
     }
   };
 
@@ -358,6 +399,7 @@ const DocumentsPage = () => {
                 key={doc.id}
                 doc={doc}
                 onDelete={handleDelete}
+                onVerify={handleVerify}
               />
             ))}
           </AnimatePresence>
