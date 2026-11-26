@@ -131,9 +131,36 @@ class CoreFixesTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("(Missing in profile)", results[0]["failed_rules"][0])
 
     def test_pdf_ocr_converts_pages_to_images(self):
-        class _FakePage:
-            def save(self, fh, format="JPEG"):
-                fh.write(b"\xff\xd8\xff\xe0fake-jpeg")
+        """Verify that PDF pages are rendered to images and OCR is called per page (uses pypdfium2)."""
+        import io as _io
+
+        class _FakeBitmap:
+            def __init__(self, page_num):
+                self._page_num = page_num
+
+            def to_pil(self):
+                class _FakePIL:
+                    def __init__(self, page_num):
+                        self._page_num = page_num
+
+                    def save(self, fh, format="JPEG"):
+                        fh.write(b"\xff\xd8\xff\xe0fake-jpeg")
+
+                return _FakePIL(self._page_num)
+
+        class _FakePdfPage:
+            def __init__(self, page_num):
+                self._page_num = page_num
+
+            def render(self, scale=1.0):
+                return _FakeBitmap(self._page_num)
+
+        class _FakePdfDoc:
+            def __len__(self):
+                return 2
+
+            def __getitem__(self, idx):
+                return _FakePdfPage(idx + 1)
 
         class _FakeEngine:
             def __init__(self):
@@ -144,10 +171,10 @@ class CoreFixesTests(unittest.IsolatedAsyncioTestCase):
                 return [[[[[0, 0]], (f"Page {self.calls} text", 0.9)]]]
 
         fake_engine = _FakeEngine()
-        fake_pdf2image = SimpleNamespace(convert_from_bytes=lambda _bytes, dpi=200: [_FakePage(), _FakePage()])
+        fake_pdfium = SimpleNamespace(PdfDocument=lambda _bytes: _FakePdfDoc())
         with (
             patch("app.services.ocr_service.get_ocr_engine", return_value=fake_engine),
-            patch.dict(sys.modules, {"pdf2image": fake_pdf2image}),
+            patch.dict(sys.modules, {"pypdfium2": fake_pdfium}),
         ):
             text, confidence = _extract_text_from_file(b"%PDF-1.4", "application/pdf")
 

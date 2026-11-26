@@ -1,4 +1,4 @@
-"""Image preprocessing and PaddleOCR text extraction service."""
+﻿"""Image preprocessing and PaddleOCR text extraction service."""
 
 from __future__ import annotations
 
@@ -157,26 +157,26 @@ def extract_text_from_document(
     try:
         engine = get_ocr_engine()
         if file_type == "application/pdf":
-            from pdf2image import convert_from_bytes
+            import pypdfium2 as pdfium
 
-            convert_kwargs: dict[str, Any] = {"dpi": 200}
-            if max_pdf_pages == 1:
-                convert_kwargs["first_page"] = 1
-                convert_kwargs["last_page"] = 1
-            try:
-                images = convert_from_bytes(file_bytes, **convert_kwargs)
-            except TypeError:
-                images = convert_from_bytes(file_bytes, dpi=200)
-
-            if not images:
+            pdf = pdfium.PdfDocument(file_bytes)
+            total_pages = len(pdf)
+            if total_pages == 0:
                 raise OCRProcessingError("PDF contained no renderable pages")
 
-            selected_images = images[:max_pdf_pages] if max_pdf_pages else images
+            pages_to_read = (
+                range(min(max_pdf_pages, total_pages))
+                if max_pdf_pages
+                else range(total_pages)
+            )
             page_texts: list[str] = []
             page_confidences: list[float] = []
-            for page in selected_images:
+            for page_idx in pages_to_read:
+                page = pdf[page_idx]
+                bitmap = page.render(scale=200 / 72)  # ~200 DPI
+                pil_image = bitmap.to_pil()
                 buf = io.BytesIO()
-                page.save(buf, format="JPEG")
+                pil_image.save(buf, format="JPEG")
                 page_text, page_conf = _run_paddle_on_image_bytes(engine, buf.getvalue())
                 if page_text:
                     page_texts.append(page_text)
@@ -306,3 +306,4 @@ def process_document_ocr(
         refresh_applications_for_document(supabase, user_id, document_id)
     except Exception:
         logger.error("Could not refresh application status for document_id=%s", document_id)
+
