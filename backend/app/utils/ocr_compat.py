@@ -27,6 +27,39 @@ def is_missing_column_error(error: Exception) -> bool:
     )
 
 
+def normalize_document_row(
+    doc: dict[str, Any],
+    verification: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Ensure document rows expose both 007 verification fields and legacy fields."""
+    normalized = dict(doc)
+    doc_type = normalized.get("doc_type") or normalized.get("document_category")
+    normalized["doc_type"] = doc_type
+    normalized["document_category"] = normalized.get("document_category") or doc_type
+    normalized["extracted_fields"] = (
+        normalized.get("extracted_fields")
+        or (verification.get("extracted_fields") if verification else None)
+        or {}
+    )
+    normalized["mismatch_details"] = (
+        normalized.get("mismatch_details")
+        if normalized.get("mismatch_details") is not None
+        else ((verification.get("mismatches") if verification else None) or [])
+    )
+    if normalized.get("ocr_confidence") is None and verification:
+        conf = verification.get("confidence_score")
+        if conf is not None:
+            normalized["ocr_confidence"] = round(float(conf) / 100.0, 4) if float(conf) > 1 else float(conf)
+    if not normalized.get("verification_status"):
+        normalized["verification_status"] = (
+            (verification.get("verification_status") if verification else None) or "pending"
+        )
+    if normalized.get("raw_text") is None and verification and verification.get("raw_text"):
+        normalized["raw_text"] = verification.get("raw_text")
+    normalized["verification"] = verification
+    return normalized
+
+
 def normalize_ocr_result(
     row: dict[str, Any] | None,
     doc: dict[str, Any] | None = None,

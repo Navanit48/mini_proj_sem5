@@ -20,7 +20,12 @@ def upload_file(user_id: str, file_bytes: bytes, content_type: str) -> str:
     supabase = get_supabase_client()
     
     # Store each user's documents in their own folder with a server-generated name.
-    ext = ".pdf" if content_type == "application/pdf" else ".jpg"
+    ext_map = {
+        "application/pdf": ".pdf",
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+    }
+    ext = ext_map.get(content_type, ".jpg")
     unique_name = f"{uuid.uuid4()}{ext}"
     storage_path = f"{user_id}/{unique_name}"
 

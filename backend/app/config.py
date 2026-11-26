@@ -39,8 +39,8 @@ class Settings(BaseSettings):
     N8N_WEBHOOK_SECRET: str = ""
 
     # ─── File Upload ───
-    MAX_UPLOAD_SIZE_MB: int = 10
-    ALLOWED_FILE_TYPES: str = "image/jpeg,application/pdf"
+    MAX_UPLOAD_SIZE_MB: int = 5
+    ALLOWED_FILE_TYPES: str = "image/jpeg,image/png,application/pdf"
 
 @lru_cache()
 def get_settings() -> Settings:
