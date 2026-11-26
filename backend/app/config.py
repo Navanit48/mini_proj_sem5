@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     # ─── PaddleOCR ───
     PADDLE_USE_GPU: bool = False
     PADDLE_LANG: str = "en"
+    OCR_MIN_CONFIDENCE: float = 0.80
 
     # ─── n8n ───
     N8N_WEBHOOK_SECRET: str = ""
