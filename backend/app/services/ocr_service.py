@@ -203,7 +203,7 @@ def _sanitize_raw_text(raw_text: str, doc_type: str) -> str:
         return ""
     if doc_type == "aadhaar":
         return re.sub(
-            r"\b\d{4}[\s-]?\d{4}[\s-]?(\d{4})\b",
+            r"(?<!\d)\d{4}[ \t-]?\d{4}[ \t-]?(\d{4})(?!\d)",
             lambda match: f"XXXX-XXXX-{match.group(1)}",
             raw_text,
         )
