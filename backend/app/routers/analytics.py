@@ -77,19 +77,27 @@ async def get_dashboard_stats(user=Depends(get_current_user)):
     )
     verification_rows = list(verification_by_id.values())
     verification_summary = {
-        "preliminary_match": sum(row.get("verification_status") == "preliminary_match" for row in verification_rows),
+        "verified": sum(
+            row.get("verification_status") in {"verified", "preliminary_match"}
+            for row in verification_rows
+        ),
+        "preliminary_match": sum(
+            row.get("verification_status") in {"verified", "preliminary_match"}
+            for row in verification_rows
+        ),
+        "mismatch": sum(row.get("verification_status") == "mismatch" for row in verification_rows),
         "needs_review": sum(row.get("verification_status") == "needs_review" for row in verification_rows),
         "unreadable": sum(row.get("verification_status") == "unreadable" for row in verification_rows),
         "processing": sum(
-            document.get("status") in {"uploaded", "processing"}
+            document.get("status") in {"pending", "uploaded", "processing"}
             or document.get("id") not in verification_by_id
             for document in document_rows
         ),
     }
     pending_documents = sum(
-        document.get("status") in {"uploaded", "processing", "failed"}
+        document.get("status") in {"pending", "uploaded", "processing", "failed"}
         or (document.get("status") == "completed" and document.get("id") not in verification_by_id)
-        or verification_by_id.get(document.get("id"), {}).get("verification_status") in {"needs_review", "unreadable"}
+        or verification_by_id.get(document.get("id"), {}).get("verification_status") in {"pending", "mismatch", "needs_review", "unreadable"}
         for document in document_rows
     )
     try:
@@ -119,7 +127,7 @@ async def get_dashboard_stats(user=Depends(get_current_user)):
     return {
         "profile_completion": round(completed_profile_fields / len(completion_fields) * 100),
         "eligible_schemes": eligible_schemes_count,
-        "uploaded_documents": documents.count or 0,
+        "uploaded_documents": documents.count if documents.count is not None else len(document_rows),
         "ai_insights": ai_insights,
         "recent_applications": recent_applications,
         "verification_summary": verification_summary,

@@ -139,7 +139,15 @@ def save_ocr_verification(
         "warnings": payload.get("warnings") or [],
         "processed_at": payload.get("processed_at"),
     }
-    doc_update: dict[str, Any] = {"status": doc_status}
+    doc_update: dict[str, Any] = {
+        "status": doc_status,
+        "raw_text": payload.get("raw_text"),
+        "extracted_fields": payload.get("extracted_fields") or {},
+        "ocr_confidence": payload.get("ocr_confidence"),
+        "verification_status": payload.get("verification_status"),
+        "mismatch_details": payload.get("mismatches") or [],
+        "verified_at": payload.get("verified_at"),
+    }
 
     try:
         supabase.table("ocr_results").upsert(
@@ -167,8 +175,19 @@ def save_ocr_verification(
             "id", document_id
         ).eq("user_id", user_id).execute()
     except Exception as error:
-        if doc_update == {"status": doc_status} or not is_missing_column_error(error):
+        if not is_missing_column_error(error):
             raise
-        supabase.table("documents").update({"status": doc_status}).eq(
-            "id", document_id
-        ).eq("user_id", user_id).execute()
+        legacy_doc_update: dict[str, Any] = {"status": doc_status}
+        for field in DOCUMENT_VERIFICATION_FIELDS:
+            if field in payload:
+                legacy_doc_update[field] = payload[field]
+        try:
+            supabase.table("documents").update(legacy_doc_update).eq(
+                "id", document_id
+            ).eq("user_id", user_id).execute()
+        except Exception as inner_error:
+            if not is_missing_column_error(inner_error):
+                raise
+            supabase.table("documents").update({"status": doc_status}).eq(
+                "id", document_id
+            ).eq("user_id", user_id).execute()

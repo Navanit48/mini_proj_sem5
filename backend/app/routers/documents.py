@@ -196,9 +196,17 @@ async def verify_document_again(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    supabase.table("documents").update({"status": "processing"}).eq(
-        "id", document_id
-    ).eq("user_id", user.id).execute()
+    try:
+        supabase.table("documents").update({
+            "status": "processing",
+            "verification_status": "pending",
+        }).eq("id", document_id).eq("user_id", user.id).execute()
+    except Exception as error:
+        if not is_missing_column_error(error):
+            raise
+        supabase.table("documents").update({"status": "processing"}).eq(
+            "id", document_id
+        ).eq("user_id", user.id).execute()
 
     doc_type = doc.get("doc_type") or doc.get("document_category") or "aadhaar"
     background_tasks.add_task(

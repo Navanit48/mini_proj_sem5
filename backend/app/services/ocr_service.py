@@ -5,14 +5,18 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
 import tempfile
+from datetime import datetime, timezone
 from typing import Any
 
 import cv2
 import numpy as np
 
 from app.config import get_settings
-from app.services.document_verification import verify_document
+from app.services.checklist_service import mark_matching_checklist_tasks_complete
+from app.services.document_verifier import verify_extracted_document
+from app.services.groq_extractor import extract_document_fields_with_groq
 from app.utils.ocr_compat import save_ocr_verification
 from app.utils.storage import download_file
 from app.utils.supabase_client import get_supabase_client, safe_data
@@ -193,6 +197,19 @@ def _extract_text_from_file(file_bytes: bytes, file_type: str) -> tuple[str, flo
     return extract_text_from_document(file_bytes, file_type, max_pdf_pages=None)
 
 
+def _sanitize_raw_text(raw_text: str, doc_type: str) -> str:
+    """Mask any 12-digit Aadhaar numbers so only the last 4 digits are ever persisted."""
+    if not raw_text:
+        return ""
+    if doc_type == "aadhaar":
+        return re.sub(
+            r"\b\d{4}[\s-]?\d{4}[\s-]?(\d{4})\b",
+            lambda match: f"XXXX-XXXX-{match.group(1)}",
+            raw_text,
+        )
+    return raw_text
+
+
 def process_document_ocr(
     document_id: str,
     user_id: str,
@@ -200,8 +217,9 @@ def process_document_ocr(
     file_type: str,
     declared_type: str = "aadhaar",
 ) -> None:
-    """Background OCR + verification entry point."""
+    """Run download -> OCR -> Groq extraction -> verification -> DB save -> checklist sync."""
     supabase = get_supabase_client()
+    now_iso = datetime.now(timezone.utc).isoformat()
     try:
         supabase.table("documents").update({"status": "processing"}).eq(
             "id", document_id
@@ -211,29 +229,47 @@ def process_document_ocr(
         ocr_text, ocr_confidence = extract_text_from_document(
             file_bytes, file_type, max_pdf_pages=1
         )
+        sanitized_raw_text = _sanitize_raw_text(ocr_text, declared_type)
+        extracted_fields = extract_document_fields_with_groq(sanitized_raw_text, declared_type)
+
         profile_response = supabase.table("user_profiles").select(
             "full_name,date_of_birth,gender,state,district,category,annual_income,land_holding_acres"
         ).eq("user_id", user_id).maybe_single().execute()
         profile = safe_data(profile_response) or {}
-        verification = verify_document(ocr_text, declared_type, profile, ocr_confidence)
+        verification = verify_extracted_document(
+            declared_type,
+            extracted_fields,
+            profile,
+            ocr_confidence,
+        )
 
+        verified_at = now_iso if verification["verification_status"] == "verified" else None
         save_ocr_verification(
             supabase,
             document_id,
             user_id,
             "completed",
             {
-                "raw_text": None,
-                "extracted_fields": verification["extracted_fields"],
+                "raw_text": sanitized_raw_text,
+                "extracted_fields": extracted_fields,
+                "ocr_confidence": verification["ocr_confidence"],
                 "confidence_score": verification["confidence_score"],
                 "detected_document_type": verification["detected_document_type"],
                 "document_type_confidence": verification["document_type_confidence"],
                 "verification_status": verification["verification_status"],
                 "validation_summary": verification["validation_summary"],
-                "mismatches": verification["mismatches"],
+                "mismatches": verification["mismatch_details"],
                 "warnings": verification["warnings"],
+                "processed_at": now_iso,
+                "verified_at": verified_at,
             },
         )
+
+        if verification["verification_status"] == "verified":
+            try:
+                mark_matching_checklist_tasks_complete(supabase, user_id, declared_type)
+            except Exception:
+                logger.error("Could not update matching checklist tasks for document_id=%s", document_id)
     except Exception as exc:
         logger.error(
             "Document verification failed for document_id=%s (%s)",
@@ -249,13 +285,16 @@ def process_document_ocr(
                 {
                     "raw_text": None,
                     "extracted_fields": {},
+                    "ocr_confidence": 0.0,
                     "confidence_score": 0,
                     "detected_document_type": declared_type,
                     "document_type_confidence": 0,
                     "verification_status": "needs_review",
-                    "validation_summary": "Preliminary verification could not be completed. Review the file or upload a clearer scan.",
+                    "validation_summary": "Verification could not be completed. Review the file or re-upload a clearer scan.",
                     "mismatches": [],
                     "warnings": ["OCR processing failed; no document details were confirmed."],
+                    "processed_at": now_iso,
+                    "verified_at": None,
                 },
             )
         except Exception:
