@@ -1,12 +1,15 @@
-"""Background OCR and preliminary document verification processing."""
+"""Image preprocessing and PaddleOCR text extraction service."""
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import tempfile
-from datetime import datetime, timezone
 from typing import Any
+
+import cv2
+import numpy as np
 
 from app.config import get_settings
 from app.services.document_verification import verify_document
@@ -18,8 +21,12 @@ logger = logging.getLogger(__name__)
 _ocr_engine = None
 
 
+class OCRProcessingError(RuntimeError):
+    """Raised when document loading or OCR execution fails."""
+
+
 def get_ocr_engine():
-    """Load PaddleOCR only when a document is actually processed."""
+    """Return the singleton PaddleOCR instance, loading it once if needed."""
     global _ocr_engine
     if _ocr_engine is None:
         from paddleocr import PaddleOCR
@@ -32,6 +39,17 @@ def get_ocr_engine():
             show_log=False,
         )
     return _ocr_engine
+
+
+def init_ocr_engine() -> bool:
+    """Eagerly initialize PaddleOCR once at application startup."""
+    try:
+        get_ocr_engine()
+        logger.info("PaddleOCR engine initialized at startup")
+        return True
+    except Exception as exc:
+        logger.warning("PaddleOCR startup initialization deferred: %s", type(exc).__name__)
+        return False
 
 
 def _read_ocr_output(result: Any) -> tuple[str, float]:
@@ -48,39 +66,131 @@ def _read_ocr_output(result: Any) -> tuple[str, float]:
             if text:
                 lines.append(str(text))
                 confidences.append(confidence)
-    return "\n".join(lines), sum(confidences) / len(confidences) if confidences else 0.0
+    avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+    return "\n".join(lines), round(avg_confidence, 4)
 
 
-def _extract_text_from_file(file_bytes: bytes, file_type: str) -> tuple[str, float]:
-    """Run local PaddleOCR on an image or PDF (converting PDF pages to images first)."""
-    engine = get_ocr_engine()
-    temp_paths: list[str] = []
+def _deskew_gray(gray: np.ndarray) -> np.ndarray:
+    """Correct small skew angles based on foreground text orientation."""
+    inverted = cv2.bitwise_not(gray)
+    _, thresh = cv2.threshold(inverted, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    coords = np.column_stack(np.where(thresh > 0))
+    if len(coords) < 50:
+        return gray
+
+    angle = cv2.minAreaRect(coords)[-1]
+    if angle < -45:
+        angle = -(90 + angle)
+    elif angle > 45:
+        angle = 90 - angle
+    else:
+        angle = -angle
+
+    # Ignore negligible jitter or extreme 90-degree rotations.
+    if abs(angle) < 0.5 or abs(angle) > 20.0:
+        return gray
+
+    height, width = gray.shape[:2]
+    center = (width // 2, height // 2)
+    matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+    return cv2.warpAffine(
+        gray,
+        matrix,
+        (width, height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+
+def preprocess_image_bytes(image_bytes: bytes) -> bytes:
+    """Apply grayscale, denoise, deskew, and adaptive thresholding via OpenCV."""
+    buffer = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    if image is None:
+        return image_bytes
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    denoised = cv2.fastNlMeansDenoising(gray, None, h=10, templateWindowSize=7, searchWindowSize=21)
+    deskewed = _deskew_gray(denoised)
+    thresholded = cv2.adaptiveThreshold(
+        deskewed,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        11,
+    )
+    bgr_output = cv2.cvtColor(thresholded, cv2.COLOR_GRAY2BGR)
+    ok, encoded = cv2.imencode(".png", bgr_output)
+    if not ok:
+        raise OCRProcessingError("Failed to encode preprocessed image")
+    return encoded.tobytes()
+
+
+def _run_paddle_on_image_bytes(engine: Any, image_bytes: bytes) -> tuple[str, float]:
+    processed_bytes = preprocess_image_bytes(image_bytes)
+    suffix = ".png" if processed_bytes != image_bytes else ".jpg"
+    temp_path: str | None = None
     try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file.write(processed_bytes)
+            temp_path = temp_file.name
+        return _read_ocr_output(engine.ocr(temp_path, cls=True))
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def extract_text_from_document(
+    file_bytes: bytes,
+    file_type: str,
+    max_pdf_pages: int | None = 1,
+) -> tuple[str, float]:
+    """Load image (or first PDF page), preprocess with OpenCV, and run PaddleOCR."""
+    if not file_bytes:
+        raise OCRProcessingError("Document payload is empty")
+
+    try:
+        engine = get_ocr_engine()
         if file_type == "application/pdf":
             from pdf2image import convert_from_bytes
 
-            images = convert_from_bytes(file_bytes, dpi=200)
+            convert_kwargs: dict[str, Any] = {"dpi": 200}
+            if max_pdf_pages == 1:
+                convert_kwargs["first_page"] = 1
+                convert_kwargs["last_page"] = 1
+            try:
+                images = convert_from_bytes(file_bytes, **convert_kwargs)
+            except TypeError:
+                images = convert_from_bytes(file_bytes, dpi=200)
+
+            if not images:
+                raise OCRProcessingError("PDF contained no renderable pages")
+
+            selected_images = images[:max_pdf_pages] if max_pdf_pages else images
             page_texts: list[str] = []
             page_confidences: list[float] = []
-            for image in images:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as page_file:
-                    image.save(page_file, format="JPEG")
-                    temp_paths.append(page_file.name)
-                page_text, page_conf = _read_ocr_output(engine.ocr(temp_paths[-1], cls=True))
+            for page in selected_images:
+                buf = io.BytesIO()
+                page.save(buf, format="JPEG")
+                page_text, page_conf = _run_paddle_on_image_bytes(engine, buf.getvalue())
                 if page_text:
                     page_texts.append(page_text)
                     page_confidences.append(page_conf)
             avg_conf = sum(page_confidences) / len(page_confidences) if page_confidences else 0.0
-            return "\n".join(page_texts), avg_conf
+            return "\n".join(page_texts), round(avg_conf, 4)
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
-            temp_file.write(file_bytes)
-            temp_paths.append(temp_file.name)
-        return _read_ocr_output(engine.ocr(temp_paths[-1], cls=True))
-    finally:
-        for path in temp_paths:
-            if os.path.exists(path):
-                os.remove(path)
+        return _run_paddle_on_image_bytes(engine, file_bytes)
+    except OCRProcessingError:
+        raise
+    except Exception as exc:
+        logger.error("OCR extraction failed for type=%s (%s)", file_type, type(exc).__name__)
+        raise OCRProcessingError(f"OCR extraction failed: {type(exc).__name__}") from exc
+
+
+def _extract_text_from_file(file_bytes: bytes, file_type: str) -> tuple[str, float]:
+    """Backward-compatible helper used by tests across all PDF pages."""
+    return extract_text_from_document(file_bytes, file_type, max_pdf_pages=None)
 
 
 def process_document_ocr(
@@ -88,9 +198,9 @@ def process_document_ocr(
     user_id: str,
     storage_path: str,
     file_type: str,
-    declared_type: str = "general",
+    declared_type: str = "aadhaar",
 ) -> None:
-    """Run local OCR, compare explicit fields with the user's saved profile, and persist a preliminary result."""
+    """Background OCR + verification entry point."""
     supabase = get_supabase_client()
     try:
         supabase.table("documents").update({"status": "processing"}).eq(
@@ -98,7 +208,9 @@ def process_document_ocr(
         ).eq("user_id", user_id).execute()
 
         file_bytes = download_file(storage_path)
-        ocr_text, ocr_confidence = _extract_text_from_file(file_bytes, file_type)
+        ocr_text, ocr_confidence = extract_text_from_document(
+            file_bytes, file_type, max_pdf_pages=1
+        )
         profile_response = supabase.table("user_profiles").select(
             "full_name,date_of_birth,gender,state,district,category,annual_income,land_holding_acres"
         ).eq("user_id", user_id).maybe_single().execute()
@@ -111,7 +223,6 @@ def process_document_ocr(
             user_id,
             "completed",
             {
-                # Raw OCR can contain identity and financial data. Persist only the fields needed for review.
                 "raw_text": None,
                 "extracted_fields": verification["extracted_fields"],
                 "confidence_score": verification["confidence_score"],
@@ -121,11 +232,14 @@ def process_document_ocr(
                 "validation_summary": verification["validation_summary"],
                 "mismatches": verification["mismatches"],
                 "warnings": verification["warnings"],
-                "processed_at": datetime.now(timezone.utc).isoformat(),
             },
         )
-    except Exception:
-        logger.exception("Preliminary document verification failed for document %s", document_id)
+    except Exception as exc:
+        logger.error(
+            "Document verification failed for document_id=%s (%s)",
+            document_id,
+            type(exc).__name__,
+        )
         try:
             save_ocr_verification(
                 supabase,
@@ -138,19 +252,18 @@ def process_document_ocr(
                     "confidence_score": 0,
                     "detected_document_type": declared_type,
                     "document_type_confidence": 0,
-                    "verification_status": "unreadable",
+                    "verification_status": "needs_review",
                     "validation_summary": "Preliminary verification could not be completed. Review the file or upload a clearer scan.",
                     "mismatches": [],
                     "warnings": ["OCR processing failed; no document details were confirmed."],
-                    "processed_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
         except Exception:
-            logger.exception("Could not save failure state for document %s", document_id)
+            logger.error("Could not save failure state for document_id=%s", document_id)
 
     try:
         from app.services.application_service import refresh_applications_for_document
 
         refresh_applications_for_document(supabase, user_id, document_id)
     except Exception:
-        logger.exception("Could not refresh application status after document processing")
+        logger.error("Could not refresh application status for document_id=%s", document_id)

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.config import get_settings
+from app.services.ocr_service import init_ocr_engine
 from app.routers import (
     analytics,
     applications,
@@ -30,6 +31,7 @@ async def lifespan(app: FastAPI):
     # Startup
     settings = get_settings()
     logger.info("%s v%s starting", settings.APP_NAME, settings.APP_VERSION)
+    init_ocr_engine()
     yield
     # Shutdown
     logger.info("%s shutting down", settings.APP_NAME)
