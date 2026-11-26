@@ -34,6 +34,8 @@ const DashboardPage = () => {
       }
     };
     fetchDashboard();
+    window.addEventListener('focus', fetchDashboard);
+    return () => window.removeEventListener('focus', fetchDashboard);
   }, []);
 
   if (loading) {
@@ -125,10 +127,10 @@ const DashboardPage = () => {
               </div>
               <div className="mt-5 grid grid-cols-2 gap-3">
                 {[
-                  { label: 'Preliminary matches', value: stats.verification_summary?.preliminary_match || 0, tone: 'text-emerald-300' },
+                  { label: 'Verified', value: stats.verification_summary?.verified ?? stats.verification_summary?.preliminary_match ?? 0, tone: 'text-emerald-300' },
+                  { label: 'Mismatch', value: stats.verification_summary?.mismatch || 0, tone: 'text-rose-300' },
                   { label: 'Needs review', value: stats.verification_summary?.needs_review || 0, tone: 'text-amber-300' },
                   { label: 'Processing', value: stats.verification_summary?.processing || 0, tone: 'text-primary' },
-                  { label: 'Unreadable', value: stats.verification_summary?.unreadable || 0, tone: 'text-rose-300' },
                 ].map(item => (
                   <div key={item.label} className="rounded-xl border border-border/50 bg-secondary/20 p-3">
                     <p className={`text-xl font-semibold ${item.tone}`}>{item.value}</p>
