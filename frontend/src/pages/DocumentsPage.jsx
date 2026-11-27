@@ -33,7 +33,6 @@ const getFileIcon = (type) => {
 
 const isDocProcessing = (doc) =>
   doc.status === 'processing' ||
-  doc.status === 'uploaded' ||
   (doc.status === 'pending' && (!doc.verification_status || doc.verification_status === 'pending'));
 
 const DocumentCard = ({ doc, onDelete, onReverify, onReupload }) => {

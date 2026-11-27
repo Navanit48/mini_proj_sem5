@@ -37,17 +37,16 @@ export const VERIFICATION_BADGES = {
 export function resolveVerificationBadge(document) {
   const isProcessing =
     document.status === 'processing' ||
-    document.status === 'uploaded' ||
     (document.status === 'pending' && (!document.verification_status || document.verification_status === 'pending'));
 
   if (isProcessing) {
     return VERIFICATION_BADGES.processing;
   }
   const status = document.verification_status || document.verification?.verification_status;
-  if (status && VERIFICATION_BADGES[status]) {
+  if (status && status !== 'pending' && VERIFICATION_BADGES[status]) {
     return VERIFICATION_BADGES[status];
   }
-  if (document.status === 'failed') {
+  if (document.status === 'failed' || document.status === 'uploaded') {
     return VERIFICATION_BADGES.needs_review;
   }
   return VERIFICATION_BADGES.processing;
@@ -64,7 +63,6 @@ const formatFieldValue = (field, value) => {
 const DocumentVerificationPanel = ({ document }) => {
   const isProcessing =
     document.status === 'processing' ||
-    document.status === 'uploaded' ||
     (document.status === 'pending' && (!document.verification_status || document.verification_status === 'pending'));
 
   const result = document.verification;
