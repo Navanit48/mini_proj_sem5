@@ -226,7 +226,9 @@ def extract_document_fields_with_groq(raw_text: str, doc_type: str) -> dict[str,
     if not settings.GROQ_API_KEY.strip():
         return regex_extract_fields(raw_text, doc_type)
 
-    expected_keys = EXPECTED_KEYS_BY_DOC_TYPE[doc_type]
+    expected_keys = EXPECTED_KEYS_BY_DOC_TYPE.get(doc_type)
+    if not expected_keys:
+        return schema_cls().model_dump()
     system_prompt = (
         "You extract structured data from Indian government document OCR text.\n"
         f"Document type: {doc_type}\n"

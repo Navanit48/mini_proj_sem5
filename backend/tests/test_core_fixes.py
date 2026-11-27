@@ -10,7 +10,8 @@ import httpx
 from app.dependencies import get_current_user
 from app.main import app
 from app.services.eligibility_engine import evaluate_eligibility
-from app.services.ocr_service import _extract_text_from_file
+from app.services.ocr_service import _extract_text_from_file, _run_paddle_on_image_bytes
+from app.utils.storage import get_signed_url
 
 
 class _NoneMaybeSingleQuery:
@@ -211,6 +212,33 @@ class CoreFixesTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(login.status_code, 503, login.text)
                 self.assertIn("Cannot reach Supabase Auth service", login.json()["detail"])
+
+    def test_get_signed_url_returns_empty_string_when_object_missing(self):
+        class _MissingStorage:
+            def from_(self, _bucket):
+                return self
+
+            def create_signed_url(self, **_kwargs):
+                raise RuntimeError("Object not found")
+
+        with patch(
+            "app.utils.storage.get_supabase_client",
+            return_value=SimpleNamespace(storage=_MissingStorage()),
+        ):
+            self.assertEqual(get_signed_url("user-1/missing.jpg"), "")
+
+    def test_paddle_v3_predict_output_is_parsed(self):
+        class _PaddleV3Engine:
+            def ocr(self, _path, cls=True):
+                raise TypeError("predict() got an unexpected keyword argument 'cls'")
+
+            def predict(self, _path):
+                return [{"rec_texts": ["Asha Rao", "INCOME 120000"], "rec_scores": [0.95, 0.85]}]
+
+        text, confidence = _run_paddle_on_image_bytes(_PaddleV3Engine(), b"raw-img")
+        self.assertIn("Asha Rao", text)
+        self.assertIn("INCOME 120000", text)
+        self.assertAlmostEqual(confidence, 0.9)
 
 
 if __name__ == "__main__":

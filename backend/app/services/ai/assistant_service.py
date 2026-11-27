@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 
-from app.services.ai.deterministic_provider import DeterministicAssistantProvider
+from app.services.ai.groq_provider import GroqAssistantProvider
 from app.services.ai.provider import AssistantProvider
 from app.services.ai_recommendation import get_recommendation_provider
 from app.utils.ocr_compat import is_missing_column_error
@@ -46,7 +46,7 @@ def _normalize_legacy_messages(
 class AssistantService:
     def __init__(self, supabase: Any, provider: AssistantProvider | None = None):
         self.supabase = supabase
-        self.provider = provider or DeterministicAssistantProvider()
+        self.provider = provider or GroqAssistantProvider()
 
     def list_conversations(self, user_id: str) -> list[dict[str, Any]]:
         try:
@@ -114,7 +114,9 @@ class AssistantService:
     def send_message(self, user_id: str, conversation_id: str, question: str) -> dict[str, Any]:
         conversation = self._owned_conversation(user_id, conversation_id)
         clean_question = question.strip()
-        generated = self.provider.generate_response(clean_question, self.load_context(user_id))
+        context = self.load_context(user_id)
+        context["history"] = self.get_conversation(user_id, conversation_id)
+        generated = self.provider.generate_response(clean_question, context)
         metadata = {
             "scheme_cards": generated.get("scheme_cards", []),
             "actions": generated.get("actions", []),

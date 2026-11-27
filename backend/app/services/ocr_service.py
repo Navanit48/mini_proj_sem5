@@ -30,18 +30,28 @@ class OCRProcessingError(RuntimeError):
 
 
 def get_ocr_engine():
-    """Return the singleton PaddleOCR instance, loading it once if needed."""
+    """Return the singleton PaddleOCR instance, supporting both 2.x and 3.x."""
     global _ocr_engine
     if _ocr_engine is None:
+        os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
         from paddleocr import PaddleOCR
 
         settings = get_settings()
-        _ocr_engine = PaddleOCR(
-            use_angle_cls=True,
-            lang=settings.PADDLE_LANG,
-            use_gpu=settings.PADDLE_USE_GPU,
-            show_log=False,
-        )
+        try:
+            _ocr_engine = PaddleOCR(
+                use_angle_cls=True,
+                lang=settings.PADDLE_LANG,
+                use_gpu=settings.PADDLE_USE_GPU,
+                show_log=False,
+            )
+        except (ValueError, TypeError):
+            _ocr_engine = PaddleOCR(
+                lang=settings.PADDLE_LANG,
+                ocr_version="PP-OCRv4",
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+            )
     return _ocr_engine
 
 
@@ -60,6 +70,18 @@ def _read_ocr_output(result: Any) -> tuple[str, float]:
     lines: list[str] = []
     confidences: list[float] = []
     for page in result or []:
+        if hasattr(page, "get") or isinstance(page, dict):
+            rec_texts = page.get("rec_texts") or []
+            rec_scores = page.get("rec_scores") or []
+            for idx, text in enumerate(rec_texts):
+                if text:
+                    lines.append(str(text))
+                    if idx < len(rec_scores):
+                        try:
+                            confidences.append(float(rec_scores[idx]))
+                        except (TypeError, ValueError):
+                            pass
+            continue
         if not isinstance(page, (list, tuple)):
             continue
         for line in page:
@@ -139,7 +161,11 @@ def _run_paddle_on_image_bytes(engine: Any, image_bytes: bytes) -> tuple[str, fl
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             temp_file.write(processed_bytes)
             temp_path = temp_file.name
-        return _read_ocr_output(engine.ocr(temp_path, cls=True))
+        try:
+            raw_result = engine.ocr(temp_path, cls=True)
+        except TypeError:
+            raw_result = engine.predict(temp_path) if hasattr(engine, "predict") else engine.ocr(temp_path)
+        return _read_ocr_output(raw_result)
     finally:
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
@@ -155,7 +181,6 @@ def extract_text_from_document(
         raise OCRProcessingError("Document payload is empty")
 
     try:
-        engine = get_ocr_engine()
         if file_type == "application/pdf":
             import pypdfium2 as pdfium
 
@@ -171,8 +196,23 @@ def extract_text_from_document(
             )
             page_texts: list[str] = []
             page_confidences: list[float] = []
+            engine = None
             for page_idx in pages_to_read:
                 page = pdf[page_idx]
+                native_text = ""
+                if hasattr(page, "get_textpage"):
+                    try:
+                        text_page = page.get_textpage()
+                        native_text = (text_page.get_text_range() or "").strip()
+                    except Exception:
+                        native_text = ""
+                if len(native_text) >= 20:
+                    page_texts.append(native_text)
+                    page_confidences.append(0.99)
+                    continue
+
+                if engine is None:
+                    engine = get_ocr_engine()
                 bitmap = page.render(scale=200 / 72)  # ~200 DPI
                 pil_image = bitmap.to_pil()
                 buf = io.BytesIO()
@@ -184,6 +224,7 @@ def extract_text_from_document(
             avg_conf = sum(page_confidences) / len(page_confidences) if page_confidences else 0.0
             return "\n".join(page_texts), round(avg_conf, 4)
 
+        engine = get_ocr_engine()
         return _run_paddle_on_image_bytes(engine, file_bytes)
     except OCRProcessingError:
         raise

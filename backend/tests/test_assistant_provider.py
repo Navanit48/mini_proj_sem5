@@ -1,6 +1,9 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.services.ai.deterministic_provider import DeterministicAssistantProvider
+from app.services.ai.groq_provider import GroqAssistantProvider
 
 
 class DeterministicAssistantProviderTests(unittest.TestCase):
@@ -123,6 +126,78 @@ class DeterministicAssistantProviderTests(unittest.TestCase):
         self.assertIn("Ayushman Bharat - PMJAY", pmjay["content"])
         pmkisan = self.provider.generate_response("Tell me about PM Kisan", context)
         self.assertIn("PM Kisan Samman Nidhi", pmkisan["content"])
+
+
+class GroqAssistantProviderTests(unittest.TestCase):
+    def setUp(self):
+        self.provider = GroqAssistantProvider()
+        self.context = {
+            "profile": {"full_name": "Asha Rao", "state": "Bihar", "occupation": "farmer"},
+            "schemes": [
+                {
+                    "id": "scheme-1",
+                    "name": "PMAY",
+                    "benefits_summary": "Housing subsidy",
+                    "application_url": "https://example.gov/apply",
+                }
+            ],
+            "eligibility_results": [
+                {
+                    "scheme_id": "scheme-1",
+                    "scheme": {
+                        "id": "scheme-1",
+                        "name": "PMAY",
+                        "benefits_summary": "Housing subsidy",
+                        "application_url": "https://example.gov/apply",
+                    },
+                    "match_percentage": 85,
+                    "status": "Eligible",
+                    "matched_rules": ["income"],
+                    "failed_rules": [],
+                }
+            ],
+            "documents": [],
+            "checklists": [],
+            "dashboard_stats": {"profile_completion": 60, "eligible_schemes": 1},
+            "history": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello!"}],
+        }
+
+    def test_uses_groq_when_configured_and_validates_cards_and_actions(self):
+        fake_groq = {
+            "content": "You qualify for **PMAY** at **85%** based on your Bihar farmer profile.",
+            "referenced_scheme_ids": ["scheme-1", "unknown-id"],
+            "actions": [
+                {"label": "Apply", "href": "https://example.gov/apply", "external": True},
+                {"label": "Check docs", "href": "/documents", "external": False},
+                {"label": "Phishing", "href": "https://evil.example", "external": True},
+            ],
+        }
+        with (
+            patch("app.services.ai.groq_provider.get_settings", return_value=SimpleNamespace(GROQ_API_KEY="gsk_real_key")),
+            patch("app.services.ai.groq_provider.call_groq", return_value=fake_groq) as mock_call,
+        ):
+            result = self.provider.generate_response("Compare PMAY benefits for me", self.context)
+
+        mock_call.assert_called_once()
+        self.assertIn("85%", result["content"])
+        self.assertEqual([c["id"] for c in result["scheme_cards"]], ["scheme-1"])
+        self.assertEqual(
+            result["actions"],
+            [
+                {"label": "Apply", "href": "https://example.gov/apply", "external": True},
+                {"label": "Check docs", "href": "/documents", "external": False},
+            ],
+        )
+
+    def test_falls_back_to_deterministic_when_groq_errors(self):
+        with (
+            patch("app.services.ai.groq_provider.get_settings", return_value=SimpleNamespace(GROQ_API_KEY="gsk_real_key")),
+            patch("app.services.ai.groq_provider.call_groq", side_effect=RuntimeError("API error")),
+        ):
+            result = self.provider.generate_response("What schemes am I eligible for?", self.context)
+
+        self.assertIn("PMAY", result["content"])
+        self.assertEqual(result["scheme_cards"][0]["match_percentage"], 85)
 
 
 if __name__ == "__main__":

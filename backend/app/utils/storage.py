@@ -3,10 +3,12 @@ AidFlow AI - Storage Utility
 Handles file operations with Supabase Storage.
 """
 
-from app.utils.supabase_client import get_supabase_client
+import logging
 import uuid
 
+from app.utils.supabase_client import get_supabase_client
 
+logger = logging.getLogger(__name__)
 BUCKET_NAME = "documents"
 
 
@@ -39,29 +41,32 @@ def upload_file(user_id: str, file_bytes: bytes, content_type: str) -> str:
 
 
 def get_signed_url(storage_path: str, expires_in: int = 3600) -> str:
-    """
-    Generate a signed URL for a stored file.
-    
-    Args:
-        storage_path: Path in storage bucket
-        expires_in: URL expiry in seconds (default 1 hour)
-    
-    Returns:
-        Signed URL string
-    """
-    supabase = get_supabase_client()
-    response = supabase.storage.from_(BUCKET_NAME).create_signed_url(
-        path=storage_path,
-        expires_in=expires_in,
-    )
-    return response.get("signedURL") or response.get("signedUrl", "")
+    """Generate a signed URL for a stored file, returning '' if missing."""
+    if not storage_path:
+        return ""
+    try:
+        supabase = get_supabase_client()
+        response = supabase.storage.from_(BUCKET_NAME).create_signed_url(
+            path=storage_path,
+            expires_in=expires_in,
+        )
+        return response.get("signedURL") or response.get("signedUrl", "")
+    except Exception as exc:
+        logger.warning("Could not create signed URL for %s: %s", storage_path, exc)
+        return ""
 
 
 def delete_file(storage_path: str) -> bool:
-    """Delete a file from Supabase Storage."""
-    supabase = get_supabase_client()
-    supabase.storage.from_(BUCKET_NAME).remove([storage_path])
-    return True
+    """Delete a file from Supabase Storage, ignoring already-missing files."""
+    if not storage_path:
+        return False
+    try:
+        supabase = get_supabase_client()
+        supabase.storage.from_(BUCKET_NAME).remove([storage_path])
+        return True
+    except Exception as exc:
+        logger.warning("Could not delete storage file %s: %s", storage_path, exc)
+        return False
 
 
 def download_file(storage_path: str) -> bytes:

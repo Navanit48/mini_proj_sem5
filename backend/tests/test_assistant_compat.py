@@ -114,7 +114,10 @@ class AssistantCompatTests(unittest.IsolatedAsyncioTestCase):
         supabase = _LegacyAssistantSupabase(user_id)
         app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id)
         try:
-            with patch("app.routers.assistant.get_supabase_client", return_value=supabase):
+            with (
+                patch("app.routers.assistant.get_supabase_client", return_value=supabase),
+                patch("app.services.ai.groq_provider._is_groq_configured", return_value=False),
+            ):
                 transport = httpx.ASGITransport(app=app)
                 async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
                     created = await client.post("/api/v1/assistant/conversations", json={})

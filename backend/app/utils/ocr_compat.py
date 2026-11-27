@@ -118,6 +118,44 @@ def fetch_ocr_result_for_document(
     return normalize_ocr_result(safe_data(response), doc)
 
 
+def _is_constraint_error(error: Exception) -> bool:
+    text = str(error)
+    return "23514" in text or "check constraint" in text
+
+
+def _is_on_conflict_error(error: Exception) -> bool:
+    text = str(error)
+    return "42P10" in text or "no unique or exclusion constraint" in text
+
+
+def _save_ocr_row(supabase, document_id: str, payload: dict[str, Any]) -> None:
+    """Upsert ocr_results by document_id, falling back to select+update/insert if no UNIQUE constraint."""
+    try:
+        supabase.table("ocr_results").upsert(
+            payload, on_conflict="document_id"
+        ).execute()
+    except Exception as error:
+        if not _is_on_conflict_error(error):
+            raise
+        existing = supabase.table("ocr_results").select("id").eq(
+            "document_id", document_id
+        ).limit(1).execute()
+        if existing.data:
+            supabase.table("ocr_results").update(payload).eq(
+                "document_id", document_id
+            ).execute()
+        else:
+            supabase.table("ocr_results").insert(payload).execute()
+
+
+def _legacy_verification_status(value: Any) -> str:
+    if value in ("preliminary_match", "needs_review", "unreadable"):
+        return str(value)
+    if value == "verified":
+        return "preliminary_match"
+    return "needs_review"
+
+
 def save_ocr_verification(
     supabase,
     document_id: str,
@@ -128,7 +166,7 @@ def save_ocr_verification(
     """Persist OCR verification to ocr_results and documents across schema versions."""
     full_ocr_payload = {
         "document_id": document_id,
-        "raw_text": payload.get("raw_text"),
+        "raw_text": payload.get("raw_text") or "",
         "extracted_fields": payload.get("extracted_fields") or {},
         "confidence_score": payload.get("confidence_score", 0),
         "detected_document_type": payload.get("detected_document_type"),
@@ -150,43 +188,64 @@ def save_ocr_verification(
     }
 
     try:
-        supabase.table("ocr_results").upsert(
-            full_ocr_payload, on_conflict="document_id"
-        ).execute()
+        _save_ocr_row(supabase, document_id, full_ocr_payload)
     except Exception as error:
-        if not is_missing_column_error(error):
+        if _is_constraint_error(error):
+            mapped_ocr = {
+                **full_ocr_payload,
+                "verification_status": _legacy_verification_status(
+                    full_ocr_payload.get("verification_status")
+                ),
+            }
+            try:
+                _save_ocr_row(supabase, document_id, mapped_ocr)
+            except Exception as inner_error:
+                if not is_missing_column_error(inner_error):
+                    raise
+                legacy_ocr_payload = {
+                    "document_id": document_id,
+                    "raw_text": payload.get("raw_text") or "",
+                    "extracted_fields": payload.get("extracted_fields") or {},
+                    "confidence": payload.get("confidence_score", 0),
+                    "processed_at": payload.get("processed_at"),
+                }
+                _save_ocr_row(supabase, document_id, legacy_ocr_payload)
+        elif not is_missing_column_error(error):
             raise
-        legacy_ocr_payload = {
-            "document_id": document_id,
-            "raw_text": payload.get("raw_text"),
-            "extracted_fields": payload.get("extracted_fields") or {},
-            "confidence": payload.get("confidence_score", 0),
-            "processed_at": payload.get("processed_at"),
-        }
-        supabase.table("ocr_results").upsert(
-            legacy_ocr_payload, on_conflict="document_id"
-        ).execute()
-        for field in DOCUMENT_VERIFICATION_FIELDS:
-            if field in payload:
-                doc_update[field] = payload[field]
+        else:
+            legacy_ocr_payload = {
+                "document_id": document_id,
+                "raw_text": payload.get("raw_text") or "",
+                "extracted_fields": payload.get("extracted_fields") or {},
+                "confidence": payload.get("confidence_score", 0),
+                "processed_at": payload.get("processed_at"),
+            }
+            _save_ocr_row(supabase, document_id, legacy_ocr_payload)
+            for field in DOCUMENT_VERIFICATION_FIELDS:
+                if field in payload:
+                    doc_update[field] = payload[field]
 
     try:
         supabase.table("documents").update(doc_update).eq(
             "id", document_id
         ).eq("user_id", user_id).execute()
     except Exception as error:
-        if not is_missing_column_error(error):
+        if not is_missing_column_error(error) and not _is_constraint_error(error):
             raise
         legacy_doc_update: dict[str, Any] = {"status": doc_status}
         for field in DOCUMENT_VERIFICATION_FIELDS:
             if field in payload:
-                legacy_doc_update[field] = payload[field]
+                legacy_doc_update[field] = (
+                    _legacy_verification_status(payload[field])
+                    if field == "verification_status"
+                    else payload[field]
+                )
         try:
             supabase.table("documents").update(legacy_doc_update).eq(
                 "id", document_id
             ).eq("user_id", user_id).execute()
         except Exception as inner_error:
-            if not is_missing_column_error(inner_error):
+            if not is_missing_column_error(inner_error) and not _is_constraint_error(inner_error):
                 raise
             supabase.table("documents").update({"status": doc_status}).eq(
                 "id", document_id

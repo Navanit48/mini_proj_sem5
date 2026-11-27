@@ -100,7 +100,7 @@ async def upload_document(
         try:
             response = supabase.table("documents").insert(doc_data).execute()
         except Exception as error:
-            if not is_missing_column_error(error) and "documents_status_check" not in str(error):
+            if not is_missing_column_error(error) and "23514" not in str(error) and "check constraint" not in str(error):
                 raise
             legacy_doc_data = {
                 "user_id": user.id,
@@ -202,7 +202,11 @@ async def verify_document_again(
             "verification_status": "pending",
         }).eq("id", document_id).eq("user_id", user.id).execute()
     except Exception as error:
-        if not is_missing_column_error(error):
+        if (
+            not is_missing_column_error(error)
+            and "23514" not in str(error)
+            and "check constraint" not in str(error)
+        ):
             raise
         supabase.table("documents").update({"status": "processing"}).eq(
             "id", document_id
